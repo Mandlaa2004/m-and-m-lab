@@ -210,8 +210,10 @@ def initialize_database() -> None:
         credentials = (("admin", os.environ.get("ADMIN_PASSWORD", "admin123"), "Admin"), ("analyst", os.environ.get(
             "ANALYST_PASSWORD", "analyst123"), "Security Analyst"), ("viewer", os.environ.get("VIEWER_PASSWORD", "viewer123"), "Viewer"))
         for username, password, role in credentials:
-            db.execute("INSERT OR IGNORE INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-                       (username, generate_password_hash(password), role))
+            db.execute(
+                "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?) ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash, role = excluded.role",
+                (username, generate_password_hash(password), role),
+            )
         rules = (
             ("AUTH-001", "Brute-force authentication",
              "Repeated failed authentication attempts", "HIGH", "T1110"),
