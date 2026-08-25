@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>M &amp; M Lab | Sign in</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+
+<body class="login-page"><canvas id="security-canvas"></canvas>
+    <main class="login-shell">
+        <div class="login-mark">M</div>
+        <p class="eyebrow">LOCAL SECURITY OPERATIONS</p>
+        <h1>M &amp; M Lab</h1>
+        <p class="login-copy">A private command center for understanding the activity across your computer and lab
+            network.</p>
+        <form method="post" class="login-form"><input type="hidden" name="csrf_token"
+                value="{{ csrf_token }}"><label>Analyst ID<input name="username" value="analyst"
+                    required></label><label>Passphrase<input name="password" type="password"
+                    placeholder="Enter passphrase" required></label>{% if error %}<p class="form-error">{{ error }}</p>
+            {% endif %}<button class="primary-button">Open console <span>→</span></button></form>
+    </main>
+    <script src="{{ url_for('static', filename='login.js') }}"></script>
+</body>
+
+</html>

@@ -1,0 +1,656 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;600;700;800&display=swap');
+
+:root {
+    --ink: #102725;
+    --paper: #f3f7f4;
+    --muted: #71847e;
+    --line: #d8e6df;
+    --mint: #9fe6c3;
+    --teal: #187779;
+    --red: #e46654;
+    --amber: #d39a32;
+    --shadow: 0 18px 50px #173d3210
+}
+
+* {
+    box-sizing: border-box
+}
+
+html {
+    scroll-behavior: smooth
+}
+
+body {
+    margin: 0;
+    background: radial-gradient(circle at 80% 0, #dff3e811, transparent 30%), var(--paper);
+    color: var(--ink);
+    font: 13px Manrope, sans-serif
+}
+
+a {
+    text-decoration: none;
+    color: inherit
+}
+
+.topbar {
+    height: 72px;
+    padding: 0 5vw;
+    background: #fff;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 25px;
+    position: sticky;
+    top: 0;
+    z-index: 3
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 16px
+}
+
+.brand-mark,
+.login-mark {
+    display: grid;
+    place-items: center;
+    width: 31px;
+    height: 31px;
+    border-radius: 9px;
+    background: var(--ink);
+    color: var(--mint);
+    font-weight: 800
+}
+
+.topbar nav {
+    display: flex;
+    gap: 5px;
+    margin: auto
+}
+
+.topbar nav a {
+    padding: 8px 10px;
+    border-radius: 5px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700
+}
+
+.topbar nav a:hover {
+    background: #edf5f0;
+    color: var(--ink)
+}
+
+.session {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    color: var(--muted);
+    font: 10px 'DM Mono'
+}
+
+.session i {
+    width: 7px;
+    height: 7px;
+    background: #43bd81;
+    border-radius: 50%;
+    box-shadow: 0 0 0 4px #def3e6
+}
+
+.session a {
+    color: var(--teal);
+    font: 700 11px Manrope
+}
+
+.shell {
+    max-width: 1450px;
+    margin: auto;
+    padding: 42px 5vw 75px
+}
+
+.hero {
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    margin-bottom: 35px
+}
+
+.eyebrow {
+    margin: 0 0 9px;
+    color: var(--teal);
+    font: 500 10px 'DM Mono';
+    letter-spacing: .11em
+}
+
+.hero h1 {
+    font-size: 41px;
+    line-height: 1.07;
+    letter-spacing: -2.5px;
+    margin: 0 0 10px
+}
+
+.hero em {
+    font-style: normal;
+    color: var(--teal)
+}
+
+.muted {
+    color: var(--muted);
+    margin: 0
+}
+
+.button,
+button {
+    border: 0;
+    border-radius: 6px;
+    padding: 12px 15px;
+    background: var(--ink);
+    color: #fff;
+    font: 700 11px Manrope;
+    cursor: pointer
+}
+
+.stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 13px;
+    margin-bottom: 18px
+}
+
+.stat,
+.panel {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow)
+}
+
+.stat {
+    padding: 18px 20px;
+    min-height: 126px
+}
+
+.stat.dark {
+    background: var(--ink);
+    color: white;
+    border-color: var(--ink)
+}
+
+.stat small {
+    color: var(--muted);
+    font: 500 9px 'DM Mono';
+    letter-spacing: .08em
+}
+
+.stat.dark small {
+    color: #abc4b9
+}
+
+.stat strong {
+    display: block;
+    font-size: 34px;
+    letter-spacing: -2px;
+    margin: 22px 0 4px
+}
+
+.stat span {
+    font-size: 10px;
+    color: var(--muted)
+}
+
+.red {
+    color: var(--red) !important
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: 1.6fr .9fr;
+    gap: 18px;
+    margin-bottom: 18px
+}
+
+.grid.three {
+    grid-template-columns: 1.35fr 1fr 1fr
+}
+
+.panel {
+    overflow: hidden
+}
+
+.panel header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 22px 14px
+}
+
+.panel h2 {
+    font-size: 17px;
+    letter-spacing: -.6px;
+    margin: 0
+}
+
+.panel header>span {
+    color: var(--muted);
+    font: 10px 'DM Mono'
+}
+
+.filters {
+    display: flex;
+    gap: 8px;
+    padding: 0 22px 14px
+}
+
+.filters input,
+.filters select,
+.tool input {
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 10px;
+    color: var(--ink);
+    background: #fbfdfb;
+    font: 11px Manrope;
+    outline: 0
+}
+
+.filters input {
+    flex: 1
+}
+
+.table-wrap {
+    overflow: auto
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 11px
+}
+
+th {
+    background: #f9fbfa;
+    color: #8b9c96;
+    text-align: left;
+    padding: 10px 22px;
+    font: 9px 'DM Mono'
+}
+
+td {
+    padding: 13px 22px;
+    border-top: 1px solid #edf2ef;
+    white-space: nowrap
+}
+
+.event-row {
+    cursor: pointer
+}
+
+.event-row:hover {
+    background: #f6faf7
+}
+
+.event-message {
+    display: block;
+    color: var(--muted);
+    font-size: 9px;
+    margin-top: 3px;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis
+}
+
+.mono {
+    font: 10px 'DM Mono'
+}
+
+.severity {
+    font: 700 9px 'DM Mono';
+    padding: 5px 7px;
+    border-radius: 4px
+}
+
+.severity-CRITICAL,
+.severity-HIGH {
+    background: #fde5df;
+    color: #a54135
+}
+
+.severity-MEDIUM {
+    background: #fff2d0;
+    color: #946d19
+}
+
+.severity-LOW {
+    background: #e2f4e8;
+    color: #3a7a5f
+}
+
+.severity-INFO {
+    background: #e1f1f2;
+    color: #397477
+}
+
+.status {
+    font-size: 10px;
+    color: var(--muted)
+}
+
+.chart {
+    height: 180px;
+    display: flex;
+    align-items: end;
+    justify-content: space-evenly;
+    padding: 20px 30px 10px;
+    border-bottom: 1px solid var(--line)
+}
+
+.bar {
+    width: 30px;
+    min-height: 8px;
+    border-radius: 5px 5px 2px 2px;
+    background: var(--teal)
+}
+
+.bar-group {
+    text-align: center;
+    color: var(--muted);
+    font: 9px 'DM Mono'
+}
+
+.chart-label {
+    padding: 15px 22px 0;
+    margin: 0
+}
+
+.time-chart {
+    height: 58px;
+    display: flex;
+    align-items: end;
+    gap: 4px;
+    padding: 8px 22px 17px
+}
+
+.time-chart span {
+    flex: 1;
+    background: var(--teal);
+    opacity: .7;
+    border-radius: 3px 3px 0 0
+}
+
+.tool-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px
+}
+
+.tool {
+    padding: 21px;
+    min-height: 190px
+}
+
+.tool h2 {
+    margin: 0 0 20px
+}
+
+.tool input {
+    width: 100%
+}
+
+.inline {
+    display: flex;
+    gap: 7px
+}
+
+.inline input {
+    flex: 1
+}
+
+.inline button {
+    background: var(--teal)
+}
+
+.meter {
+    height: 5px;
+    background: #edf2ef;
+    margin-top: 14px;
+    border-radius: 4px
+}
+
+.meter i {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--red);
+    border-radius: 4px
+}
+
+.tool-result {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: 11px
+}
+
+.tool-result span {
+    color: var(--muted);
+    font-family: 'DM Mono'
+}
+
+.result {
+    margin-top: 18px;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.7
+}
+
+.messages {
+    height: 120px;
+    overflow: auto;
+    background: #f5faf7;
+    padding: 11px;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.5
+}
+
+.messages div {
+    padding: 7px 9px;
+    background: #e2f3e8;
+    border-radius: 7px;
+    margin-bottom: 7px
+}
+
+.modal[hidden] {
+    display: none
+}
+
+.modal {
+    position: fixed;
+    inset: 0;
+    background: #10272588;
+    display: grid;
+    place-items: center;
+    z-index: 8
+}
+
+.modal-box {
+    width: min(500px, 90vw);
+    background: #fff;
+    border-radius: 10px;
+    padding: 25px;
+    position: relative
+}
+
+.close {
+    position: absolute;
+    right: 15px;
+    top: 12px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 21px;
+    padding: 4px
+}
+
+.detail {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    gap: 10px;
+    font-size: 11px;
+    margin: 20px 0
+}
+
+.detail dt {
+    color: var(--muted);
+    font: 9px 'DM Mono';
+    text-transform: uppercase
+}
+
+.detail dd {
+    margin: 0;
+    overflow-wrap: anywhere
+}
+
+.actions {
+    display: flex;
+    gap: 8px
+}
+
+.outline {
+    background: #fff;
+    color: var(--teal);
+    border: 1px solid var(--line)
+}
+
+.login-page {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background: radial-gradient(circle at 50% 20%, #17493e, var(--ink) 48%, #030b0b);
+    overflow: hidden;
+    position: relative
+}
+
+.login-shell {
+    z-index: 1;
+    width: min(390px, 90vw);
+    color: #fff
+}
+
+.login-mark {
+    width: 43px;
+    height: 43px;
+    font-size: 20px;
+    margin-bottom: 43px
+}
+
+.login-shell h1 {
+    font-size: 48px;
+    letter-spacing: -3px;
+    margin: 0 0 12px
+}
+
+.login-copy {
+    color: #aac0b6;
+    line-height: 1.7;
+    font-size: 13px;
+    margin: 0 0 35px
+}
+
+.login-form label {
+    display: block;
+    color: #9bb5aa;
+    font: 10px 'DM Mono';
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin-bottom: 15px
+}
+
+.login-form input {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    padding: 13px;
+    border: 1px solid #42635b;
+    background: #1e3a35;
+    color: #fff;
+    border-radius: 5px;
+    font: 13px Manrope;
+    outline: 0
+}
+
+.primary-button {
+    width: 100%;
+    text-align: left;
+    margin-top: 8px;
+    background: var(--mint);
+    color: var(--ink)
+}
+
+.primary-button span {
+    float: right;
+    font-size: 17px
+}
+
+.form-error {
+    color: #ffab94;
+    font-size: 11px
+}
+
+#security-canvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: .85
+}
+
+.login-page:after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(0deg, transparent 0, transparent 5px, #6de0b804 6px)
+}
+
+@media(max-width:900px) {
+    .topbar nav {
+        display: none
+    }
+
+    .stats,
+    .grid,
+    .grid.three,
+    .tool-grid {
+        grid-template-columns: 1fr 1fr
+    }
+
+    .hero {
+        gap: 18px;
+        align-items: start;
+        flex-direction: column
+    }
+}
+
+@media(max-width:560px) {
+
+    .stats,
+    .grid,
+    .grid.three,
+    .tool-grid {
+        grid-template-columns: 1fr
+    }
+
+    .shell {
+        padding-top: 28px
+    }
+
+    .hero h1 {
+        font-size: 32px
+    }
+
+    .session {
+        display: none
+    }
+}

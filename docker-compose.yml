@@ -1,0 +1,22 @@
+services:
+  cybersecurity-app:
+    build: .
+    ports:
+      - "5000:5000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      FLASK_ENV: production
+      DATA_DIR: /app/data
+    volumes:
+      - m-and-m-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/api/health')" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  m-and-m-data:

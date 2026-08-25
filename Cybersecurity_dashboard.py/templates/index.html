@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>M &amp; M Lab | SOC</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+
+<body>
+    <header class="topbar"><a class="brand" href="#overview"><span class="brand-mark">M</span><b>M &amp; M Lab</b></a>
+        <nav><a href="#overview">Overview</a><a href="#events">Events</a><a href="#investigations">Investigations</a><a
+                href="#tools">Tools</a></nav>
+        <div class="session"><i></i>{{ username }} · {{ role }} <a href="{{ url_for('logout') }}">Sign out</a></div>
+    </header>
+    <main class="shell">
+        <section id="overview" class="hero">
+            <div>
+                <p class="eyebrow">SECURITY OPERATIONS CENTER / LIVE</p>
+                <h1>See the signal.<br><em>Move with confidence.</em></h1>
+                <p class="muted">Your local lab, translated into decisions.</p>
+            </div><a class="button" href="{{ url_for('export_events') }}">Export events ↓</a>
+        </section>
+        <section class="stats">
+            <article class="stat dark"><small>EVENTS TODAY</small><strong id="total-events">--</strong><span>Live event
+                    stream</span></article>
+            <article class="stat"><small>OPEN CASES</small><strong id="open-events">--</strong><span>Needs review</span>
+            </article>
+            <article class="stat"><small>CRITICAL ALERTS</small><strong id="critical-events">--</strong><span
+                    class="red">Immediate attention</span></article>
+            <article class="stat"><small>SUSPICIOUS IPS</small><strong id="suspicious-ips">--</strong><span>High-risk
+                    sources</span></article>
+        </section>
+        <section id="events" class="grid">
+            <article class="panel wide">
+                <header>
+                    <div>
+                        <p class="eyebrow">LIVE EVENT STREAM</p>
+                        <h2>Security events</h2>
+                    </div><span id="event-count">0 events</span>
+                </header>
+                <div class="filters"><input id="event-search" placeholder="Search IP, event, user..."><select
+                        id="severity-filter">
+                        <option value="">All severities</option>
+                        <option>CRITICAL</option>
+                        <option>HIGH</option>
+                        <option>MEDIUM</option>
+                        <option>LOW</option>
+                        <option>INFO</option>
+                    </select></div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Event</th>
+                                <th>Source</th>
+                                <th>Severity</th>
+                                <th>Time</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="events-table"></tbody>
+                    </table>
+                </div>
+            </article>
+            <article class="panel">
+                <header>
+                    <div>
+                        <p class="eyebrow">THREAT POSTURE</p>
+                        <h2>Severity mix</h2>
+                    </div>
+                </header>
+                <div id="severity-chart" class="chart"></div>
+                <p class="eyebrow chart-label">EVENTS OVER TIME</p>
+                <div id="time-chart" class="time-chart"></div>
+            </article>
+        </section>
+        <section id="investigations" class="grid three">
+            <article class="panel">
+                <header>
+                    <div>
+                        <p class="eyebrow">CASE MANAGEMENT</p>
+                        <h2>Investigations</h2>
+                    </div>
+                </header>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Case</th>
+                                <th>Status</th>
+                                <th>Updated</th>
+                            </tr>
+                        </thead>
+                        <tbody id="incidents-table"></tbody>
+                    </table>
+                </div>
+            </article>
+            <article class="panel">
+                <header>
+                    <div>
+                        <p class="eyebrow">DETECTION OUTPUT</p>
+                        <h2>Recent alerts</h2>
+                    </div>
+                </header>
+                <div id="alerts-list"></div>
+            </article>
+            <article class="panel">
+                <header>
+                    <div>
+                        <p class="eyebrow">CONTROL PLANE</p>
+                        <h2>Detection rules</h2>
+                    </div>
+                </header>
+                <div id="rules-list"></div>
+            </article>
+        </section>
+        <section id="tools" class="tool-grid">
+            <article class="panel tool">
+                <p class="eyebrow">CREDENTIAL HYGIENE</p>
+                <h2>Password strength</h2><input id="password-input" type="password" placeholder="Test a passphrase">
+                <div class="meter"><i id="strength-meter"></i></div>
+                <div class="tool-result"><b id="strength-label">Waiting for input</b><span id="strength-score">0 /
+                        5</span></div>
+            </article>
+            <article class="panel tool">
+                <p class="eyebrow">NETWORK CONTEXT</p>
+                <h2>IP lookup</h2>
+                <div class="inline"><input id="ip-input" value="185.220.101.14"><button id="ip-button">Inspect</button>
+                </div>
+                <div id="ip-result" class="result">Classify an address and view local observations.</div>
+            </article>
+            <article class="panel tool">
+                <p class="eyebrow">LOCAL COPILOT</p>
+                <h2>SOC assistant</h2>
+                <div id="assistant-messages" class="messages">
+                    <div>Ask about alerts, incidents, rules, or safe lab tools.</div>
+                </div>
+                <form id="assistant-form" class="inline"><input id="assistant-input"
+                        placeholder="Ask your SOC..."><button>↑</button></form>
+            </article>
+        </section>
+    </main>
+    <div class="modal" id="event-modal" hidden>
+        <div class="modal-box"><button id="modal-close" class="close">×</button>
+            <p class="eyebrow">EVENT INVESTIGATION</p>
+            <h2 id="modal-title"></h2>
+            <div id="modal-content"></div>
+            <div class="actions"><button id="investigate-button">Open investigation</button><button id="resolve-button"
+                    class="outline">Resolve</button></div>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+
+</html>

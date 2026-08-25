@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: m-and-m-lab
+    runtime: python
+    plan: free
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120 wsgi:app
+    healthCheckPath: /api/health
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+      - key: SESSION_COOKIE_SECURE
+        value: "1"
+      - key: SECRET_KEY
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ANALYST_PASSWORD
+        sync: false
+      - key: VIEWER_PASSWORD
+        sync: false
+    disks:
+      - name: m-and-m-lab-data
+        mountPath: /var/data
+        sizeGB: 1
