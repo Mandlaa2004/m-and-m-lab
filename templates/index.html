@@ -1,21 +1,3 @@
-<aside class="assistant-widget" id="assistant-widget"><button class="assistant-toggle" id="assistant-toggle"
-        type="button"><span class="assistant-pulse"></span>Ask M &amp; M assistant</button>
-    <section class="assistant-panel" id="assistant-panel" hidden>
-        <div class="assistant-header">
-            <div>
-                <p class="eyebrow">LOCAL COPILOT</p>
-                <h2>SOC assistant</h2>
-            </div><button class="modal-close" id="assistant-close" type="button" aria-label="Close assistant">×</button>
-        </div>
-        <div class="assistant-messages" id="assistant-messages">
-            <div class="assistant-message">I can summarize your current alerts, events, investigations, rules, and safe
-                lab tools.</div>
-        </div>
-        <form class="assistant-form" id="assistant-form"><input id="assistant-input" placeholder="Ask about your SOC..."
-                autocomplete="off"><button class="small-button" type="submit" aria-label="Send question">↑</button>
-        </form>
-    </section>
-</aside>
 <!doctype html>
 <html lang="en">
 
@@ -24,13 +6,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token }}">
     <title>M & M Lab | Console</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ asset_url('styles.css') }}">
 </head>
 
 <body>
     <header class="topbar">
-        <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark">M</span><span>M &amp; M
-                <b>Lab</b></span></a>
+        <a class="brand" href="{{ url_for('dashboard') }}">
+            <span class="mm-logo brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 120 72" role="img" focusable="false">
+                    <defs>
+                        <linearGradient id="mmAccentConsole" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#46f0d5" />
+                            <stop offset="100%" stop-color="#f4c856" />
+                        </linearGradient>
+                    </defs>
+                    <rect x="2" y="2" width="116" height="68" rx="18" fill="#0b1620" stroke="#1c2b38" />
+                    <path d="M16 53V18h10l12 16 12-16h10v35h-9V32L50 47h-4L34 32v21h-9z" fill="url(#mmAccentConsole)" />
+                    <path d="M66 53V18h10l12 16 12-16h10v35h-9V32L100 47h-4L84 32v21h-9z" fill="#dff8f2"
+                        opacity=".92" />
+                </svg>
+            </span>
+            <span>M &amp; M <b>Lab</b></span>
+        </a>
         <nav class="workspace-nav" aria-label="Workspace navigation">
             <button class="nav-link active" data-scroll="overview" type="button">Overview</button>
             <button class="nav-link" data-scroll="events" type="button">Events</button>
@@ -58,7 +55,14 @@
                 <p class="eyebrow">SECURITY OPERATIONS CENTER / OVERVIEW</p>
                 <h1><span id="greeting">Welcome</span>, {{ username }}.</h1>
                 <p class="muted">Your lab is being watched. Here is the signal worth your attention.</p>
-            </div><a class="export-button" href="{{ url_for('export_events') }}">Download report <span>↓</span></a>
+            </div>
+            <div class="welcome-actions">
+                <div class="hero-badge" aria-label="M and M Lab console is online">
+                    <span class="hero-badge-mark" aria-hidden="true">M<span>M</span></span>
+                    <span><strong>Console online</strong><small>Live monitoring</small></span>
+                </div>
+                <a class="export-button" href="{{ url_for('export_events') }}">Download report <span>↓</span></a>
+            </div>
         </section>
         <section class="stat-grid" id="summary-cards">
             <article class="stat-card stat-primary">
@@ -508,6 +512,27 @@
             </article>
         </section>
     </main>
+    <aside class="assistant-widget" id="assistant-widget"><button class="assistant-toggle" id="assistant-toggle"
+            type="button"><span class="assistant-pulse"></span>Ask M &amp; M assistant</button>
+        <section class="assistant-panel" id="assistant-panel" hidden>
+            <div class="assistant-header">
+                <div>
+                    <p class="eyebrow">LOCAL COPILOT</p>
+                    <h2>SOC assistant</h2>
+                </div><button class="modal-close" id="assistant-close" type="button"
+                    aria-label="Close assistant">×</button>
+            </div>
+            <div class="assistant-messages" id="assistant-messages">
+                <div class="assistant-message">I can summarize your current alerts, events, investigations, rules, and
+                    safe
+                    lab tools.</div>
+            </div>
+            <form class="assistant-form" id="assistant-form"><input id="assistant-input"
+                    placeholder="Ask about your SOC..." autocomplete="off"><button class="small-button" type="submit"
+                    aria-label="Send question">↑</button>
+            </form>
+        </section>
+    </aside>
     <div class="modal-backdrop" id="event-modal" hidden>
         <section class="event-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button
                 class="modal-close" id="modal-close" type="button" aria-label="Close">×</button>
@@ -519,7 +544,7 @@
                     event</button></div>
         </section>
     </div>
-    <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <script src="{{ asset_url('app.js') }}"></script>
 </body>
 
 </html>

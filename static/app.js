@@ -3,6 +3,10 @@ const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || 
 const escapeHtml = value => String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character]));
 const formatTime = value => new Date(value).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 
+let summaryRequestInFlight = false;
+let notificationsRequestInFlight = false;
+let operationsRequestInFlight = false;
+
 function updateLocalTime() {
     const now = new Date();
     const hour = now.getHours();
@@ -11,32 +15,44 @@ function updateLocalTime() {
 }
 
 async function loadSummary() {
-    const response = await fetch('/api/summary');
-    if (!response.ok) return;
-    const data = await response.json();
-    document.querySelector('#total-events').textContent = data.today ?? data.total;
-    document.querySelector('#open-events').textContent = data.open;
-    document.querySelector('#unique-sources').textContent = data.sources;
-    document.querySelector('#critical-events').textContent = data.critical;
-    document.querySelector('#suspicious-ips').textContent = data.suspicious_ips;
-    drawChart(data.counts);
-    drawTimeChart(data.hourly);
-    renderActivity(data.activity);
-    renderEvents(data.events);
-    renderOperationsPulse(data);
-    loadOperations();
-    loadNotifications();
+    if (summaryRequestInFlight) return;
+    summaryRequestInFlight = true;
+    try {
+        const response = await fetch('/api/summary');
+        if (!response.ok) return;
+        const data = await response.json();
+        document.querySelector('#total-events').textContent = data.today ?? data.total;
+        document.querySelector('#open-events').textContent = data.open;
+        document.querySelector('#unique-sources').textContent = data.sources;
+        document.querySelector('#critical-events').textContent = data.critical;
+        document.querySelector('#suspicious-ips').textContent = data.suspicious_ips;
+        drawChart(data.counts);
+        drawTimeChart(data.hourly);
+        renderActivity(data.activity);
+        renderEvents(data.events);
+        renderOperationsPulse(data);
+        loadOperations();
+        loadNotifications();
+    } finally {
+        summaryRequestInFlight = false;
+    }
 }
 
 async function loadNotifications() {
-    const response = await fetch('/api/notifications');
-    if (!response.ok) return;
-    const data = await response.json();
-    const count = document.querySelector('#notification-count');
-    count.textContent = data.unread;
-    count.hidden = !data.unread;
-    document.querySelector('#notification-list').innerHTML = data.items.length ? data.items.map(item => `<a class="notification-item ${item.read_at ? 'read' : ''}" href="${escapeHtml(item.link)}" data-notification-id="${item.id}"><span class="severity severity-${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.message)} · ${formatTime(item.created_at)}</small></span></a>`).join('') : '<p class="empty">You are all caught up.</p>';
-    document.querySelectorAll('.notification-item').forEach(item => item.addEventListener('click', async () => { await fetch(`/api/notifications/${item.dataset.notificationId}/read`, { method: 'POST', headers: { 'X-CSRF-Token': csrfToken } }); }));
+    if (notificationsRequestInFlight) return;
+    notificationsRequestInFlight = true;
+    try {
+        const response = await fetch('/api/notifications');
+        if (!response.ok) return;
+        const data = await response.json();
+        const count = document.querySelector('#notification-count');
+        count.textContent = data.unread;
+        count.hidden = !data.unread;
+        document.querySelector('#notification-list').innerHTML = data.items.length ? data.items.map(item => `<a class="notification-item ${item.read_at ? 'read' : ''}" href="${escapeHtml(item.link)}" data-notification-id="${item.id}"><span class="severity severity-${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.message)} · ${formatTime(item.created_at)}</small></span></a>`).join('') : '<p class="empty">You are all caught up.</p>';
+        document.querySelectorAll('.notification-item').forEach(item => item.addEventListener('click', async () => { await fetch(`/api/notifications/${item.dataset.notificationId}/read`, { method: 'POST', headers: { 'X-CSRF-Token': csrfToken } }); }));
+    } finally {
+        notificationsRequestInFlight = false;
+    }
 }
 
 function renderPulseList(targetId, items, labelKey, valueKey) {
@@ -90,19 +106,27 @@ async function filterEvents() {
 }
 
 async function loadOperations() {
-    const [incidentsResponse, alertsResponse, rulesResponse] = await Promise.all([fetch('/api/incidents'), fetch('/api/alerts'), fetch('/api/rules')]);
-    if (incidentsResponse.ok) renderIncidents(await incidentsResponse.json());
-    if (alertsResponse.ok) renderAlerts(await alertsResponse.json());
-    if (rulesResponse.ok) renderRules(await rulesResponse.json());
-    loadAssets();
-    loadCollectors();
-    loadMetrics();
-    loadUsers();
-    loadIndicators();
-    loadActivityFeed();
-    loadReports();
-    loadNotificationPreferences();
-    loadPlatformSettings();
+    if (operationsRequestInFlight) return;
+    operationsRequestInFlight = true;
+    try {
+        const [incidentsResponse, alertsResponse, rulesResponse] = await Promise.all([fetch('/api/incidents'), fetch('/api/alerts'), fetch('/api/rules')]);
+        if (incidentsResponse.ok) renderIncidents(await incidentsResponse.json());
+        if (alertsResponse.ok) renderAlerts(await alertsResponse.json());
+        if (rulesResponse.ok) renderRules(await rulesResponse.json());
+        await Promise.all([
+            loadAssets(),
+            loadCollectors(),
+            loadMetrics(),
+            loadUsers(),
+            loadIndicators(),
+            loadActivityFeed(),
+            loadReports(),
+            loadNotificationPreferences(),
+            loadPlatformSettings()
+        ]);
+    } finally {
+        operationsRequestInFlight = false;
+    }
 }
 
 function renderIncidents(items) {

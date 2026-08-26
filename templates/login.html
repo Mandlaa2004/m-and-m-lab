@@ -5,12 +5,24 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>M &amp; M Lab | Sign in</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ asset_url('styles.css') }}">
 </head>
 
 <body class="login-page">
     <main class="login-shell">
-        <div class="login-mark">M</div>
+        <div class="mm-logo login-logo" aria-hidden="true">
+            <svg viewBox="0 0 120 72" role="img" focusable="false">
+                <defs>
+                    <linearGradient id="mmAccent" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#46f0d5" />
+                        <stop offset="100%" stop-color="#f4c856" />
+                    </linearGradient>
+                </defs>
+                <rect x="2" y="2" width="116" height="68" rx="18" fill="#0b1620" stroke="#1c2b38" />
+                <path d="M16 53V18h10l12 16 12-16h10v35h-9V32L50 47h-4L34 32v21h-9z" fill="url(#mmAccent)" />
+                <path d="M66 53V18h10l12 16 12-16h10v35h-9V32L100 47h-4L84 32v21h-9z" fill="#dff8f2" opacity=".92" />
+            </svg>
+        </div>
         <p class="eyebrow">LOCAL SECURITY OPERATIONS</p>
         <h1>M &amp; M Lab</h1>
         <p class="login-copy">A private console for understanding what is happening on your computer and lab network.
@@ -28,7 +40,7 @@
     <canvas id="security-canvas" aria-hidden="true"></canvas>
     <div class="login-scanline" aria-hidden="true"></div>
     <div class="login-orbit orbit-two"></div>
-    <script src="{{ url_for('static', filename='login.js') }}"></script>
+    <script src="{{ asset_url('login.js') }}"></script>
 </body>
 
 </html>

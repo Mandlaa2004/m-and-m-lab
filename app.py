@@ -24,6 +24,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR)).expanduser()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DATABASE = DATA_DIR / "security_dashboard.db"
 app = Flask(__name__)
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 31_536_000 if IS_PRODUCTION else 0
 app.config["SECRET_KEY"] = os.environ.get(
     "SECRET_KEY", "local-lab-secret-change-me")
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
@@ -334,7 +335,16 @@ def csrf_token() -> str:
 
 @app.context_processor
 def inject_security_context():
-    return {"csrf_token": csrf_token()}
+    def asset_url(filename: str) -> str:
+        asset_filename = "styles.min.css" if IS_PRODUCTION and filename == "styles.css" else filename
+        asset_path = BASE_DIR / "static" / asset_filename
+        if not asset_path.exists():
+            asset_filename = filename
+            asset_path = BASE_DIR / "static" / asset_filename
+        version = f"{asset_path.stat().st_mtime_ns:x}-{asset_path.stat().st_size:x}"
+        return url_for("static", filename=asset_filename, v=version)
+
+    return {"asset_url": asset_url, "csrf_token": csrf_token()}
 
 
 @app.before_request
