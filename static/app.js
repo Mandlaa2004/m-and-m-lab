@@ -14,7 +14,7 @@ function updateLocalTime() {
     document.querySelector('#live-clock').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-async function loadSummary() {
+async function loadSummary({ refreshOperations = false, refreshNotifications = false } = {}) {
     if (summaryRequestInFlight) return;
     summaryRequestInFlight = true;
     try {
@@ -31,8 +31,8 @@ async function loadSummary() {
         renderActivity(data.activity);
         renderEvents(data.events);
         renderOperationsPulse(data);
-        loadOperations();
-        loadNotifications();
+        if (refreshOperations) loadOperations();
+        if (refreshNotifications) loadNotifications();
     } finally {
         summaryRequestInFlight = false;
     }
@@ -278,7 +278,7 @@ async function postJson(url, payload) {
 document.querySelector('#log-button').addEventListener('click', async () => {
     const { data } = await postJson('/api/log-analyzer', { text: document.querySelector('#log-input').value });
     document.querySelector('#log-result').textContent = data.error || `${data.lines} lines · ${data.failed_logins} failed logins · ${data.repeated_sources.length} repeated sources detected`;
-    loadSummary();
+    loadSummary({ refreshOperations: true, refreshNotifications: true });
 });
 
 document.querySelector('#ids-button').addEventListener('click', async () => {
@@ -313,7 +313,7 @@ async function pollMonitor() {
     if (data.error) { document.querySelector('#monitor-result').textContent = data.error; return; }
     monitorCursor = data.cursor;
     document.querySelector('#monitor-result').textContent = `${data.lines.length} new line${data.lines.length === 1 ? '' : 's'} · ${data.alerts.length} alert${data.alerts.length === 1 ? '' : 's'} · cursor ${monitorCursor}`;
-    loadSummary();
+    loadSummary({ refreshOperations: true, refreshNotifications: true });
 }
 document.querySelector('#monitor-button').addEventListener('click', async event => {
     if (monitorTimer) {
@@ -347,7 +347,7 @@ async function loadIndicators() {
 document.querySelector('#incident-button').addEventListener('click', async () => {
     const { data } = await postJson('/api/incidents', { title: document.querySelector('#incident-title').value });
     document.querySelector('#incident-result').textContent = Array.isArray(data) ? `${data.length} incident${data.length === 1 ? '' : 's'} in the queue` : data.error;
-    loadSummary();
+    loadSummary({ refreshOperations: true });
 });
 
 document.querySelector('#asset-add').addEventListener('click', () => { document.querySelector('#asset-form').hidden = !document.querySelector('#asset-form').hidden; });
@@ -378,7 +378,9 @@ document.querySelector('#assistant-form').addEventListener('submit', async event
     messages.scrollTop = messages.scrollHeight;
 });
 
-loadSummary();
+loadSummary({ refreshOperations: true, refreshNotifications: true });
 updateLocalTime();
 setInterval(updateLocalTime, 1000);
-setInterval(loadSummary, 10000);
+setInterval(loadSummary, 30000);
+setInterval(loadNotifications, 60000);
+setInterval(loadOperations, 60000);

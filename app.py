@@ -540,7 +540,8 @@ def events():
 @login_required
 def event_detail(event_id: int):
     with get_db() as db:
-        event = db.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+        event = db.execute(
+            "SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
     if event is None:
         return jsonify({"error": "Event not found."}), 404
     return jsonify(dict(event))
@@ -1037,7 +1038,6 @@ def platform_settings():
 def alerts():
     with get_db() as db:
         rows = db.execute("SELECT alerts.*, detection_rules.name, detection_rules.mitre_attack, events.source_ip, events.user, events.severity FROM alerts LEFT JOIN detection_rules ON detection_rules.rule_id = alerts.rule_id JOIN events ON events.id = alerts.event_id ORDER BY alerts.created_at DESC LIMIT 100").fetchall()
-    log_activity("Alerts viewed", f"Viewed {len(rows)} alert records")
     return jsonify([dict(row) for row in rows])
 
 
