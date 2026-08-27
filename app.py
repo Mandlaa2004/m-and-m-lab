@@ -10,6 +10,9 @@ import sqlite3
 import socket
 import time
 import logging
+import json
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -81,6 +84,26 @@ def threat_location(address: str) -> dict[str, object]:
         return {"label": "Unknown", "latitude": 0, "longitude": 0, "local": False}
     location = THREAT_LOCATIONS[int(hashlib.sha256(address.encode()).hexdigest(), 16) % len(THREAT_LOCATIONS)]
     return {"label": location[0], "latitude": location[1], "longitude": location[2], "local": False}
+
+
+def external_ip_intelligence(address: str) -> list[dict[str, object]]:
+    """Query configured providers only; all failures retain the local offline result."""
+    providers = []
+    for name, url, header in (
+        ("AbuseIPDB", f"https://api.abuseipdb.com/api/v2/check?ipAddress={address}&maxAgeInDays=90", "ABUSEIPDB_API_KEY"),
+        ("VirusTotal", f"https://www.virustotal.com/api/v3/ip_addresses/{address}", "VIRUSTOTAL_API_KEY"),
+        ("AlienVault OTX", f"https://otx.alienvault.com/api/v1/indicators/IPv4/{address}/general", "OTX_API_KEY"),
+    ):
+        token = os.environ.get(header)
+        if not token:
+            continue
+        try:
+            request_headers = {"Accept": "application/json", "Key": token} if name == "AbuseIPDB" else {"Accept": "application/json", "X-Apikey" if name == "VirusTotal" else "X-OTX-API-KEY": token}
+            with urlopen(Request(url, headers=request_headers), timeout=3) as response:
+                providers.append({"provider": name, "available": True, "data": json.loads(response.read().decode())})
+        except (URLError, TimeoutError, ValueError, OSError):
+            providers.append({"provider": name, "available": False, "data": {}})
+    return providers
 
 
 def initialize_database() -> None:
@@ -219,6 +242,27 @@ def initialize_database() -> None:
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(username) REFERENCES users(username)
             );
+            CREATE TABLE IF NOT EXISTS incident_evidence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                incident_id INTEGER NOT NULL,
+                evidence_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                related_event_id INTEGER,
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(incident_id) REFERENCES incidents(id),
+                FOREIGN KEY(related_event_id) REFERENCES events(id)
+            );
+            CREATE TABLE IF NOT EXISTS saved_searches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                name TEXT NOT NULL,
+                query TEXT NOT NULL DEFAULT '',
+                severity TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                UNIQUE(username, name),
+                FOREIGN KEY(username) REFERENCES users(username)
+            );
             CREATE INDEX IF NOT EXISTS events_timestamp_idx ON events(timestamp DESC);
             CREATE INDEX IF NOT EXISTS events_severity_idx ON events(severity);
             CREATE INDEX IF NOT EXISTS events_status_idx ON events(status);
@@ -229,6 +273,7 @@ def initialize_database() -> None:
             CREATE INDEX IF NOT EXISTS incidents_updated_at_idx ON incidents(updated_at DESC);
             CREATE INDEX IF NOT EXISTS notifications_user_created_idx ON notifications(username, created_at DESC);
             CREATE INDEX IF NOT EXISTS incident_timeline_incident_created_idx ON incident_timeline(incident_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS incident_evidence_incident_created_idx ON incident_evidence(incident_id, created_at DESC);
             """
         )
         columns = {row["name"]
@@ -646,7 +691,7 @@ def ip_info():
     highest = next((item["severity"] for item in history if item["severity"] in SEVERITIES), "INFO")
     score = threat_score(value, event_count, highest, bool(indicator))
     recommendation = "Block or isolate through the lab containment workflow." if score >= 70 else "Investigate linked events and monitor for recurrence." if score >= 35 else "Continue monitoring; no containment action is currently indicated."
-    return jsonify({"ip": value, "version": f"IPv{address.version}", "scope": "Private / lab" if private else "Public", "classification": "Reserved or local" if reserved else "Routable address", "observed_events": event_count, "threat_score": score, "location": threat_location(value), "recommendation": recommendation, "activity": [dict(item) for item in history]})
+    return jsonify({"ip": value, "version": f"IPv{address.version}", "scope": "Private / lab" if private else "Public", "classification": "Reserved or local" if reserved else "Routable address", "observed_events": event_count, "threat_score": score, "location": threat_location(value), "recommendation": recommendation, "activity": [dict(item) for item in history], "providers": external_ip_intelligence(value) if not private else []})
 
 
 @app.route("/api/ip-reputation", methods=["POST"])
@@ -930,7 +975,7 @@ def assets():
         log_activity("Asset added", f"Registered asset {name} ({ip_address})")
         return jsonify({"id": asset_id}), 201
     with get_db() as db:
-        rows = db.execute("SELECT assets.*, COUNT(events.id) AS event_count FROM assets LEFT JOIN events ON events.source_ip = assets.ip_address GROUP BY assets.id ORDER BY assets.criticality DESC, assets.name").fetchall()
+        rows = db.execute("SELECT assets.*, COUNT(events.id) AS event_count, SUM(CASE WHEN events.timestamp >= ? THEN 1 ELSE 0 END) AS recent_event_count FROM assets LEFT JOIN events ON events.source_ip = assets.ip_address GROUP BY assets.id ORDER BY assets.criticality DESC, assets.name", ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),)).fetchall()
     weights = {"LOW": 25, "MEDIUM": 50, "HIGH": 75, "CRITICAL": 95}
     result = []
     for row in rows:
@@ -939,6 +984,7 @@ def assets():
             item["criticality"], 50) + min(item["event_count"] * 3, 25))
         item["risk_level"] = "CRITICAL" if item["risk_score"] >= 90 else "HIGH" if item[
             "risk_score"] >= 70 else "MEDIUM" if item["risk_score"] >= 40 else "LOW"
+        item["risk_trend"] = "RISING" if item["recent_event_count"] else "STABLE"
         result.append(item)
     return jsonify(result)
 
@@ -1106,7 +1152,21 @@ def platform_settings():
 def alerts():
     with get_db() as db:
         rows = db.execute("SELECT alerts.*, detection_rules.name, detection_rules.mitre_attack, events.source_ip, events.user, events.severity FROM alerts LEFT JOIN detection_rules ON detection_rules.rule_id = alerts.rule_id JOIN events ON events.id = alerts.event_id ORDER BY alerts.created_at DESC LIMIT 100").fetchall()
-    return jsonify([dict(row) for row in rows])
+    sla_minutes = {"CRITICAL": 15, "HIGH": 60, "MEDIUM": 240, "LOW": 480, "INFO": 1440}
+    now = datetime.now(timezone.utc)
+    result = []
+    for row in rows:
+        item = dict(row)
+        created = datetime.fromisoformat(item["created_at"])
+        acknowledged = datetime.fromisoformat(item["acknowledged_at"]) if item["acknowledged_at"] else None
+        limit = sla_minutes.get(item["severity"], 240)
+        elapsed = (acknowledged or now) - created
+        item["sla_minutes"] = limit
+        item["time_to_ack_minutes"] = round(elapsed.total_seconds() / 60, 1) if acknowledged else None
+        item["overdue"] = not acknowledged and elapsed.total_seconds() > limit * 60
+        item["escalation"] = "ESCALATED" if item["overdue"] else "ASSIGNED" if item["assignee"] else "UNASSIGNED"
+        result.append(item)
+    return jsonify(result)
 
 
 @app.route("/api/rules", methods=["GET", "PATCH"])
@@ -1219,6 +1279,67 @@ def incident_timeline(incident_id: int):
         rows = db.execute(
             "SELECT * FROM incident_timeline WHERE incident_id = ? ORDER BY created_at DESC", (incident_id,)).fetchall()
     return jsonify([dict(row) for row in rows])
+
+
+@app.route("/api/incidents/<int:incident_id>/evidence", methods=["GET", "POST"])
+@login_required
+def incident_evidence(incident_id: int):
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        evidence_type = payload.get("evidence_type", "NOTE").upper()
+        content = payload.get("content", "").strip()
+        if evidence_type not in {"NOTE", "LOG", "HASH", "EVENT"} or not content:
+            return jsonify({"error": "Provide a note, log excerpt, hash, or event reference."}), 400
+        with get_db() as db:
+            db.execute("INSERT INTO incident_evidence (incident_id, evidence_type, content, related_event_id, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)", (incident_id, evidence_type, content[:4000], payload.get("related_event_id"), session["username"], datetime.now(timezone.utc).isoformat()))
+        log_activity("Evidence attached", f"Attached {evidence_type.lower()} evidence to incident #{incident_id}")
+    with get_db() as db:
+        rows = db.execute("SELECT * FROM incident_evidence WHERE incident_id = ? ORDER BY created_at DESC", (incident_id,)).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.route("/api/mitre-coverage")
+@login_required
+def mitre_coverage():
+    expected = {"T1110": "Brute Force", "T1078": "Valid Accounts", "T1046": "Network Service Discovery", "T1083": "File and Directory Discovery", "T1190": "Exploit Public-Facing Application", "T1486": "Data Encrypted for Impact", "T1566": "Phishing"}
+    with get_db() as db:
+        enabled = {row["mitre_attack"]: dict(row) for row in db.execute("SELECT * FROM detection_rules WHERE enabled = 1")}
+    return jsonify([{"technique": technique, "name": name, "covered": technique in enabled, "rule_id": enabled.get(technique, {}).get("rule_id")} for technique, name in expected.items()])
+
+
+@app.route("/api/saved-searches", methods=["GET", "POST", "DELETE"])
+@login_required
+def saved_searches():
+    payload = request.get_json(silent=True) or {}
+    if request.method == "POST":
+        name = payload.get("name", "").strip()
+        if not name:
+            return jsonify({"error": "A saved-search name is required."}), 400
+        with get_db() as db:
+            try:
+                db.execute("INSERT INTO saved_searches (username, name, query, severity, created_at) VALUES (?, ?, ?, ?, ?)", (session["username"], name[:80], payload.get("query", "")[:200], payload.get("severity", "").upper(), datetime.now(timezone.utc).isoformat()))
+            except sqlite3.IntegrityError:
+                return jsonify({"error": "You already saved a search with that name."}), 409
+        log_activity("Search saved", f"Saved search {name}")
+    elif request.method == "DELETE":
+        with get_db() as db:
+            db.execute("DELETE FROM saved_searches WHERE id = ? AND username = ?", (payload.get("id"), session["username"]))
+    with get_db() as db:
+        rows = db.execute("SELECT * FROM saved_searches WHERE username = ? ORDER BY created_at DESC", (session["username"],)).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.route("/api/playbooks", methods=["GET", "POST"])
+@login_required
+def playbooks():
+    items = [{"id": "brute-force", "title": "Brute-force login", "steps": ["Validate source and target", "Investigate related identities", "Contain affected lab account", "Document remediation"]}, {"id": "malware", "title": "Malware signal", "steps": ["Preserve evidence", "Isolate affected asset", "Scan and remediate", "Resolve with validation"]}, {"id": "recon", "title": "Port scan", "steps": ["Confirm exposed service", "Review source history", "Restrict unnecessary exposure", "Monitor recurrence"]}, {"id": "phishing", "title": "Phishing report", "steps": ["Preserve URL and headers", "Analyze indicators", "Block in lab controls", "Notify affected users"]}]
+    if request.method == "POST":
+        chosen = next((item for item in items if item["id"] == (request.get_json(silent=True) or {}).get("id")), None)
+        if not chosen:
+            return jsonify({"error": "Playbook not found."}), 404
+        log_activity("Playbook launched", f"Started {chosen['title']} workflow")
+        return jsonify(chosen)
+    return jsonify(items)
 
 
 @app.route("/api/incidents", methods=["GET", "POST", "PATCH"])
@@ -1342,6 +1463,27 @@ def export_events():
     log_activity("Report exported",
                  f"Exported {len(rows)} security events as CSV")
     return send_file(io.BytesIO(stream.getvalue().encode()), mimetype="text/csv", as_attachment=True, download_name="security-events.csv")
+
+
+@app.route("/export/audit.csv")
+@login_required
+def export_audit_report():
+    with get_db() as db:
+        event_total = db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        incident_total = db.execute("SELECT COUNT(*) FROM incidents").fetchone()[0]
+        resolved = db.execute("SELECT COUNT(*) FROM incidents WHERE status = 'RESOLVED'").fetchone()[0]
+        alerts = db.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
+        overdue = db.execute("SELECT COUNT(*) FROM alerts JOIN events ON events.id = alerts.event_id WHERE alerts.status IN ('NEW', 'OPEN') AND events.severity IN ('CRITICAL', 'HIGH') AND alerts.created_at < ?", ((datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat(),)).fetchone()[0]
+        techniques = db.execute("SELECT mitre_attack, name, enabled FROM detection_rules ORDER BY rule_id").fetchall()
+    stream = io.StringIO()
+    writer = csv.writer(stream)
+    writer.writerow(["M & M Lab audit report", datetime.now(timezone.utc).isoformat()])
+    writer.writerows([("events", event_total), ("alerts", alerts), ("incidents", incident_total), ("resolved_incidents", resolved), ("high_priority_overdue_alerts", overdue)])
+    writer.writerow([])
+    writer.writerow(["mitre_technique", "rule_name", "enabled"])
+    writer.writerows([(row["mitre_attack"], row["name"], bool(row["enabled"])) for row in techniques])
+    log_activity("Audit report exported", f"Exported audit summary with {event_total} events")
+    return send_file(io.BytesIO(stream.getvalue().encode()), mimetype="text/csv", as_attachment=True, download_name="m-and-m-audit-report.csv")
 
 
 initialize_database()

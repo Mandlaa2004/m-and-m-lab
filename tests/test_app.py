@@ -124,6 +124,22 @@ def test_threat_intelligence_summary_and_response_workflow(isolated_app):
     assert response.json[0]['response_stage'] == 'CONTAIN'
 
 
+def test_operational_workflows_store_evidence_and_saved_views(isolated_app):
+    client, token = logged_in_client(isolated_app)
+    incident = client.post('/api/incidents', json={'title': 'Evidence case'}, headers={'X-CSRF-Token': token}).json[0]
+    evidence = client.post(f"/api/incidents/{incident['id']}/evidence", json={
+        'evidence_type': 'LOG', 'content': 'Failed login from a correlated source'}, headers={'X-CSRF-Token': token})
+    assert evidence.status_code == 200
+    assert evidence.json[0]['evidence_type'] == 'LOG'
+    saved = client.post('/api/saved-searches', json={
+        'name': 'Critical events', 'severity': 'CRITICAL'}, headers={'X-CSRF-Token': token})
+    assert saved.status_code == 200
+    assert saved.json[0]['name'] == 'Critical events'
+    assert len(client.get('/api/mitre-coverage').json) == 7
+    assert len(client.get('/api/playbooks').json) == 4
+    assert client.get('/export/audit.csv').status_code == 200
+
+
 def test_collector_rejects_external_path_and_health_is_public(isolated_app):
     client, token = logged_in_client(isolated_app)
     response = client.post('/api/collectors', json={

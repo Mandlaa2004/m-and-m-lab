@@ -7,6 +7,7 @@ const isAdmin = document.body.dataset.role === 'Admin';
 let summaryRequestInFlight = false;
 let notificationsRequestInFlight = false;
 let operationsRequestInFlight = false;
+let selectedIncidentId = null;
 
 function updateLocalTime() {
     const now = new Date();
@@ -155,7 +156,10 @@ async function loadOperations() {
             loadIndicators(),
             loadActivityFeed(),
             loadReports(),
-            loadNotificationPreferences()
+            loadNotificationPreferences(),
+            loadSavedSearches(),
+            loadMitreCoverage(),
+            loadPlaybooks()
         ]);
         if (isAdmin) await Promise.all([loadUsers(), loadPlatformSettings()]);
     } finally {
@@ -175,18 +179,29 @@ async function loadTimeline(id) {
     if (!response.ok) return;
     const items = await response.json();
     document.querySelector('#incident-timeline').innerHTML = items.length ? items.map(item => `<div class="timeline-item"><strong>${escapeHtml(item.action)}</strong><span>${escapeHtml(item.actor)} · ${formatTime(item.created_at)}</span><p>${escapeHtml(item.detail || '')}</p></div>`).join('') : '<p class="empty">No timeline entries yet.</p>';
+    selectedIncidentId = id;
+    document.querySelector('#evidence-workspace').hidden = false;
+    loadEvidence(id);
+}
+
+async function loadEvidence(id) {
+    const response = await fetch(`/api/incidents/${id}/evidence`);
+    if (!response.ok) return;
+    const items = await response.json();
+    document.querySelector('#evidence-list').innerHTML = items.length ? items.map(item => `<div class="evidence-item"><b>${escapeHtml(item.evidence_type)}</b><span>${escapeHtml(item.content)}</span><small>${escapeHtml(item.created_by)} · ${formatTime(item.created_at)}</small></div>`).join('') : '<p class="empty">No evidence attached to this case.</p>';
 }
 
 function renderAlerts(items) {
     document.querySelector('#alert-count').textContent = `${items.length} alert${items.length === 1 ? '' : 's'}`;
     document.querySelector('#alerts-list').innerHTML = items.length ? items.slice(0, 8).map(item => `<button class="alert-item" data-event-id="${item.event_id}" type="button"><span class="severity severity-${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span><span><strong>${escapeHtml(item.name || 'Detection alert')}</strong><small>${escapeHtml(item.source_ip)} · ${escapeHtml(item.rule_id || 'manual')} · ${escapeHtml(item.mitre_attack || 'unmapped')}</small></span></button>`).join('') : '<p class="empty">No alerts recorded yet.</p>';
     document.querySelectorAll('.alert-item').forEach(item => item.addEventListener('click', () => inspectEvent(item.dataset.eventId)));
-    document.querySelector('#triage-list').innerHTML = items.slice(0, 6).map(item => `<div class="triage-item"><div><strong>${escapeHtml(item.name || 'Detection alert')}</strong><span>${escapeHtml(item.source_ip)} · ${escapeHtml(item.severity)}</span></div><select data-alert-id="${item.id}" class="triage-status"><option ${item.status === 'OPEN' || item.status === 'NEW' ? 'selected' : ''}>NEW</option><option ${item.status === 'ACKNOWLEDGED' ? 'selected' : ''}>ACKNOWLEDGED</option><option ${item.status === 'IN PROGRESS' ? 'selected' : ''}>IN PROGRESS</option><option ${item.status === 'RESOLVED' ? 'selected' : ''}>RESOLVED</option><option ${item.status === 'FALSE POSITIVE' ? 'selected' : ''}>FALSE POSITIVE</option></select></div>`).join('') || '<p class="empty">No alerts in queue.</p>';
+    document.querySelector('#triage-list').innerHTML = items.slice(0, 6).map(item => `<div class="triage-item ${item.overdue ? 'overdue' : ''}"><div><strong>${escapeHtml(item.name || 'Detection alert')}</strong><span>${escapeHtml(item.source_ip)} · ${escapeHtml(item.escalation)} · ${item.overdue ? 'SLA overdue' : `SLA ${item.sla_minutes}m`}</span></div><div class="triage-controls"><input class="alert-assignee" data-alert-id="${item.id}" value="${escapeHtml(item.assignee)}" placeholder="Owner" aria-label="Alert owner"><select data-alert-id="${item.id}" class="triage-status"><option ${item.status === 'OPEN' || item.status === 'NEW' ? 'selected' : ''}>NEW</option><option ${item.status === 'ACKNOWLEDGED' ? 'selected' : ''}>ACKNOWLEDGED</option><option ${item.status === 'IN PROGRESS' ? 'selected' : ''}>IN PROGRESS</option><option ${item.status === 'RESOLVED' ? 'selected' : ''}>RESOLVED</option></select></div></div>`).join('') || '<p class="empty">No alerts in queue.</p>';
     document.querySelectorAll('.triage-status').forEach(select => select.addEventListener('change', () => updateAlert(select.dataset.alertId, select.value)));
 }
 
 async function updateAlert(id, status) {
-    await fetch(`/api/alerts/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ status }) });
+    const assignee = document.querySelector(`.alert-assignee[data-alert-id="${id}"]`)?.value.trim();
+    await fetch(`/api/alerts/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ status, assignee }) });
     loadOperations();
 }
 
@@ -194,7 +209,40 @@ async function loadAssets() {
     const response = await fetch('/api/assets');
     if (!response.ok) return;
     const items = await response.json();
-    document.querySelector('#assets-table').innerHTML = items.length ? items.map(item => `<tr><td><strong>${escapeHtml(item.name)}</strong><span class="event-message">${escapeHtml(item.asset_type)} · ${escapeHtml(item.operating_system || 'OS unknown')}</span></td><td class="mono">${escapeHtml(item.ip_address)}</td><td><span class="severity severity-${escapeHtml(item.risk_level)}">${item.risk_score}/100</span></td><td>${escapeHtml(item.status)}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">No assets registered.</td></tr>';
+    document.querySelector('#assets-table').innerHTML = items.length ? items.map(item => `<tr><td><strong>${escapeHtml(item.name)}</strong><span class="event-message">${escapeHtml(item.asset_type)} · ${item.event_count} linked events · ${escapeHtml(item.risk_trend)}</span></td><td class="mono">${escapeHtml(item.ip_address)}</td><td><span class="severity severity-${escapeHtml(item.risk_level)}">${item.risk_score}/100</span></td><td>${escapeHtml(item.status)}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">No assets registered.</td></tr>';
+}
+
+async function loadSavedSearches() {
+    const response = await fetch('/api/saved-searches');
+    if (!response.ok) return;
+    const items = await response.json();
+    const target = document.querySelector('#saved-searches');
+    target.innerHTML = items.map(item => `<button class="saved-search" data-query="${escapeHtml(item.query)}" data-severity="${escapeHtml(item.severity)}" type="button">${escapeHtml(item.name)}</button>`).join('');
+    target.querySelectorAll('.saved-search').forEach(button => button.addEventListener('click', () => {
+        document.querySelector('#event-search').value = button.dataset.query;
+        document.querySelector('#severity-filter').value = button.dataset.severity;
+        filterEvents();
+    }));
+}
+
+async function loadMitreCoverage() {
+    const response = await fetch('/api/mitre-coverage');
+    if (!response.ok) return;
+    const items = await response.json();
+    document.querySelector('#coverage-count').textContent = `${items.filter(item => item.covered).length}/${items.length} covered`;
+    document.querySelector('#coverage-matrix').innerHTML = items.map(item => `<div class="coverage-cell ${item.covered ? 'covered' : 'gap'}"><strong>${escapeHtml(item.technique)}</strong><span>${escapeHtml(item.name)}</span><b>${item.covered ? 'Covered' : 'Gap'}</b></div>`).join('');
+}
+
+async function loadPlaybooks() {
+    const response = await fetch('/api/playbooks');
+    if (!response.ok) return;
+    const items = await response.json();
+    const target = document.querySelector('#playbook-list');
+    target.innerHTML = items.map(item => `<button class="playbook-button" data-playbook-id="${escapeHtml(item.id)}" type="button"><span>${escapeHtml(item.title)}</span><b>Run</b></button>`).join('');
+    target.querySelectorAll('.playbook-button').forEach(button => button.addEventListener('click', async () => {
+        const { data } = await postJson('/api/playbooks', { id: button.dataset.playbookId });
+        if (data.steps) window.alert(`${data.title}\n\n${data.steps.map((step, index) => `${index + 1}. ${step}`).join('\n')}`);
+    }));
 }
 
 async function loadActivityFeed() {
@@ -285,6 +333,13 @@ document.querySelectorAll('.nav-link').forEach(link => link.addEventListener('cl
 
 document.querySelector('#event-search').addEventListener('input', filterEvents);
 document.querySelector('#severity-filter').addEventListener('change', filterEvents);
+document.querySelector('#save-search').addEventListener('click', async () => {
+    const name = window.prompt('Name this event view');
+    if (!name) return;
+    const { data } = await postJson('/api/saved-searches', { name, query: document.querySelector('#event-search').value, severity: document.querySelector('#severity-filter').value });
+    if (data.error) window.alert(data.error);
+    loadSavedSearches();
+});
 
 document.querySelector('#password-input').addEventListener('input', async event => {
     const response = await fetch('/api/password-check', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ password: event.target.value }) });
@@ -302,7 +357,8 @@ async function inspectIp(ip) {
     const response = await fetch('/api/ip-info', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ ip: document.querySelector('#ip-input').value }) });
     const data = await response.json();
     if (!response.ok) { target.textContent = data.error; return; }
-    target.innerHTML = `<div class="ip-intel-head"><strong>${escapeHtml(data.ip)}</strong><b>${data.threat_score}/100</b></div><span>${escapeHtml(data.location.label)} · ${escapeHtml(data.classification)}</span><p>${escapeHtml(data.recommendation)}</p>${data.activity.length ? `<small>Recent activity: ${escapeHtml(data.activity[0].event_type)} · ${escapeHtml(data.activity[0].severity)}</small>` : '<small>No local activity history.</small>'}`;
+    const providers = data.providers.length ? `<small>External intelligence: ${data.providers.map(item => `${escapeHtml(item.provider)} ${item.available ? 'connected' : 'unavailable'}`).join(' · ')}</small>` : '<small>Offline intelligence mode. Configure provider keys to enrich public IPs.</small>';
+    target.innerHTML = `<div class="ip-intel-head"><strong>${escapeHtml(data.ip)}</strong><b>${data.threat_score}/100</b></div><span>${escapeHtml(data.location.label)} · ${escapeHtml(data.classification)}</span><p>${escapeHtml(data.recommendation)}</p>${data.activity.length ? `<small>Recent activity: ${escapeHtml(data.activity[0].event_type)} · ${escapeHtml(data.activity[0].severity)}</small>` : '<small>No local activity history.</small>'}${providers}`;
 }
 document.querySelector('#ip-button').addEventListener('click', () => inspectIp(document.querySelector('#ip-input').value));
 
@@ -384,6 +440,14 @@ document.querySelector('#incident-button').addEventListener('click', async () =>
     const { data } = await postJson('/api/incidents', { title: document.querySelector('#incident-title').value });
     document.querySelector('#incident-result').textContent = Array.isArray(data) ? `${data.length} incident${data.length === 1 ? '' : 's'} in the queue` : data.error;
     loadSummary({ refreshOperations: true });
+});
+
+document.querySelector('#evidence-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!selectedIncidentId) return;
+    const { data } = await postJson(`/api/incidents/${selectedIncidentId}/evidence`, Object.fromEntries(new FormData(event.target)));
+    if (data.error) window.alert(data.error);
+    else { event.target.reset(); loadEvidence(selectedIncidentId); }
 });
 
 document.querySelector('#asset-add').addEventListener('click', () => { document.querySelector('#asset-form').hidden = !document.querySelector('#asset-form').hidden; });

@@ -132,7 +132,8 @@
                         <option>MEDIUM</option>
                         <option>LOW</option>
                         <option>INFO</option>
-                    </select></div>
+                    </select><button class="small-button" id="save-search" type="button">Save view</button></div>
+                <div class="saved-searches" id="saved-searches"></div>
                 <div class="table-wrap">
                     <table>
                         <thead>
@@ -169,6 +170,16 @@
                 <span class="event-count">Detect to resolve</span>
             </div>
             <div class="response-steps" id="response-steps"></div>
+        </section>
+        <section class="coverage-grid">
+            <article class="panel coverage-panel">
+                <div class="panel-heading"><div><p class="eyebrow">MITRE ATT&CK COVERAGE</p><h2>Detection coverage</h2></div><span class="event-count" id="coverage-count">--</span></div>
+                <div class="coverage-matrix" id="coverage-matrix"></div>
+            </article>
+            <article class="panel playbook-panel">
+                <div class="panel-heading"><div><p class="eyebrow">GUIDED RESPONSE</p><h2>Playbooks</h2></div></div>
+                <div class="playbook-list" id="playbook-list"></div>
+            </article>
         </section>
         <section class="pulse-grid" aria-label="Operations pulse">
             <article class="panel pulse-panel">
@@ -299,7 +310,7 @@
                     <div>
                         <p class="eyebrow">REPORTING</p>
                         <h2>Security report</h2>
-                    </div><a class="text-link" href="/export/events.csv">Export events</a>
+                    </div><a class="text-link" href="/export/audit.csv">Audit CSV</a>
                 </div>
                 <div id="report-summary" class="report-summary"></div>
                 <div id="report-techniques" class="technique-list"></div>
@@ -345,6 +356,10 @@
                 </div>
                 <div id="incident-timeline" class="timeline-list">
                     <p class="empty">Choose an incident to view its timeline.</p>
+                </div>
+                <div class="evidence-workspace" id="evidence-workspace" hidden>
+                    <div id="evidence-list" class="evidence-list"></div>
+                    <form class="evidence-form" id="evidence-form"><select name="evidence_type"><option>NOTE</option><option>LOG</option><option>HASH</option><option>EVENT</option></select><input name="content" placeholder="Attach analyst note, log excerpt, hash, or event ID" required><button class="small-button" type="submit">Attach</button></form>
                 </div>
             </article>
         </section>
