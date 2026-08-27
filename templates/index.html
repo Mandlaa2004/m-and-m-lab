@@ -90,6 +90,31 @@
                     id="suspicious-ips">--</strong><span class="trend">High-risk sources</span>
             </article>
         </section>
+        <section class="intel-grid" aria-label="Live threat intelligence">
+            <article class="panel threat-map-panel">
+                <div class="panel-heading">
+                    <div><p class="eyebrow">LIVE THREAT TELEMETRY</p><h2>Observed source map</h2></div>
+                    <span class="event-count">Offline enrichment</span>
+                </div>
+                <div class="threat-map" id="threat-map" aria-label="Map of observed IP source locations"></div>
+                <div class="threat-roster" id="threat-roster"></div>
+            </article>
+            <article class="panel attack-panel">
+                <div class="panel-heading">
+                    <div><p class="eyebrow">ATTACK DISTRIBUTION</p><h2>Signals by technique</h2></div>
+                </div>
+                <div class="attack-chart" id="attack-chart"></div>
+            </article>
+            <article class="panel progress-panel">
+                <div class="panel-heading">
+                    <div><p class="eyebrow">ANALYST PROGRESSION</p><h2>Lab status</h2></div>
+                    <strong class="level-badge" id="analyst-level">LVL 1</strong>
+                </div>
+                <div class="xp-line"><span id="xp-progress"></span></div>
+                <div class="xp-copy"><strong id="analyst-xp">0 XP</strong><span id="xp-next">120 XP to next level</span></div>
+                <div class="achievement-list" id="achievement-list"></div>
+            </article>
+        </section>
         <section class="main-grid" id="events">
             <article class="panel events-panel">
                 <div class="panel-heading">
@@ -137,6 +162,13 @@
                 <p class="eyebrow chart-label">EVENTS OVER TIME</p>
                 <div id="time-chart" class="time-chart"></div>
             </article>
+        </section>
+        <section class="panel response-panel" aria-label="Incident response workflow">
+            <div class="panel-heading">
+                <div><p class="eyebrow">INCIDENT RESPONSE</p><h2>Response workflow</h2></div>
+                <span class="event-count">Detect to resolve</span>
+            </div>
+            <div class="response-steps" id="response-steps"></div>
         </section>
         <section class="pulse-grid" aria-label="Operations pulse">
             <article class="panel pulse-panel">

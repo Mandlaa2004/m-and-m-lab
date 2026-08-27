@@ -106,6 +106,24 @@ def test_event_detail_supports_alert_investigation(isolated_app):
     assert client.get('/api/events/999999').status_code == 404
 
 
+def test_threat_intelligence_summary_and_response_workflow(isolated_app):
+    client, token = logged_in_client(isolated_app)
+    with client.application.app_context():
+        app_module.record_event(
+            'Threat signal', '185.220.101.14', 'CRITICAL', 'Known hostile activity')
+    summary = client.get('/api/summary').json
+    assert len(summary['response_stages']) == 5
+    assert summary['threats'][0]['score'] >= 78
+    assert summary['progress']['level'] >= 1
+    intelligence = client.post('/api/ip-info', json={'ip': '185.220.101.14'}, headers={'X-CSRF-Token': token})
+    assert intelligence.json['threat_score'] >= 78
+    assert intelligence.json['activity']
+    incident = client.post('/api/incidents', json={'title': 'Workflow test'}, headers={'X-CSRF-Token': token}).json[0]
+    response = client.patch('/api/incidents', json={'id': incident['id'], 'status': 'INVESTIGATING', 'response_stage': 'CONTAIN'}, headers={'X-CSRF-Token': token})
+    assert response.status_code == 200
+    assert response.json[0]['response_stage'] == 'CONTAIN'
+
+
 def test_collector_rejects_external_path_and_health_is_public(isolated_app):
     client, token = logged_in_client(isolated_app)
     response = client.post('/api/collectors', json={

@@ -32,6 +32,10 @@ async function loadSummary({ refreshOperations = false, refreshNotifications = f
         renderActivity(data.activity);
         renderEvents(data.events);
         renderOperationsPulse(data);
+        renderThreatMap(data.threats);
+        renderAttackChart(data.attack_types);
+        renderProgress(data.progress);
+        renderResponseWorkflow(data.response_stages);
         if (refreshOperations) loadOperations();
         if (refreshNotifications) loadNotifications();
     } finally {
@@ -88,6 +92,36 @@ function drawChart(counts) {
     }).join('');
 }
 
+function renderThreatMap(threats) {
+    const map = document.querySelector('#threat-map');
+    const roster = document.querySelector('#threat-roster');
+    map.innerHTML = threats.map(threat => {
+        const x = Math.max(6, Math.min(94, ((threat.longitude + 180) / 360) * 100));
+        const y = Math.max(8, Math.min(88, ((90 - threat.latitude) / 180) * 100));
+        return `<button class="threat-point severity-${escapeHtml(threat.severity)}" style="left:${x}%;top:${y}%" title="${escapeHtml(threat.source_ip)} · ${escapeHtml(threat.label)} · ${threat.score}/100" type="button" data-ip="${escapeHtml(threat.source_ip)}"></button>`;
+    }).join('') || '<p class="empty">No source telemetry yet.</p>';
+    roster.innerHTML = threats.slice(0, 4).map(threat => `<button class="threat-row" type="button" data-ip="${escapeHtml(threat.source_ip)}"><span><strong class="mono">${escapeHtml(threat.source_ip)}</strong><small>${escapeHtml(threat.label)} · ${threat.total} events</small></span><b>${threat.score}</b></button>`).join('') || '<p class="empty">No active IP observations.</p>';
+    document.querySelectorAll('[data-ip]').forEach(button => button.addEventListener('click', () => inspectIp(button.dataset.ip)));
+}
+
+function renderAttackChart(items) {
+    const target = document.querySelector('#attack-chart');
+    const max = Math.max(...items.map(item => item.total), 1);
+    target.innerHTML = items.map(item => `<div class="attack-row"><span>${escapeHtml(item.event_type)}</span><i><b style="width:${Math.max(8, Math.round(item.total / max * 100))}%"></b></i><strong>${item.total}</strong></div>`).join('') || '<p class="empty">No attack signals yet.</p>';
+}
+
+function renderProgress(progress) {
+    document.querySelector('#analyst-level').textContent = `LVL ${progress.level}`;
+    document.querySelector('#analyst-xp').textContent = `${progress.xp} XP`;
+    document.querySelector('#xp-next').textContent = `${progress.next_level_xp - progress.xp} XP to next level`;
+    document.querySelector('#xp-progress').style.width = `${Math.min(100, progress.xp / progress.next_level_xp * 100)}%`;
+    document.querySelector('#achievement-list').innerHTML = progress.achievements.map(item => `<span class="achievement ${item.earned ? 'earned' : ''}">${item.earned ? '✓' : '○'} ${escapeHtml(item.name)}</span>`).join('');
+}
+
+function renderResponseWorkflow(stages) {
+    document.querySelector('#response-steps').innerHTML = stages.map((item, index) => `<div class="response-step ${item.total ? 'active' : ''}"><span>${String(index + 1).padStart(2, '0')}</span><strong>${escapeHtml(item.stage)}</strong><b>${item.total}</b></div>`).join('');
+}
+
 function renderEvents(events) {
     const target = document.querySelector('#events-table');
     document.querySelector('#event-count').textContent = `${events.length} event${events.length === 1 ? '' : 's'}`;
@@ -131,7 +165,7 @@ async function loadOperations() {
 
 function renderIncidents(items) {
     const target = document.querySelector('#incidents-table');
-    target.innerHTML = items.length ? items.map(item => `<tr><td><strong>#${item.id}</strong><span class="event-message">${escapeHtml(item.title)}</span></td><td><select class="incident-status" data-incident-id="${item.id}"><option ${item.status === 'OPEN' ? 'selected' : ''}>OPEN</option><option ${item.status === 'INVESTIGATING' ? 'selected' : ''}>INVESTIGATING</option><option ${item.status === 'RESOLVED' ? 'selected' : ''}>RESOLVED</option><option ${item.status === 'FALSE POSITIVE' ? 'selected' : ''}>FALSE POSITIVE</option></select></td><td class="mono">${formatTime(item.updated_at)}</td><td><button class="row-action" data-incident-id="${item.id}" type="button">Update</button><button class="row-action timeline-action" data-incident-id="${item.id}" type="button">Timeline</button></td></tr>`).join('') : '<tr><td colspan="4" class="empty">No investigations yet.</td></tr>';
+    target.innerHTML = items.length ? items.map(item => `<tr><td><strong>#${item.id}</strong><span class="event-message">${escapeHtml(item.title)}</span></td><td><select class="incident-stage" data-incident-id="${item.id}">${['DETECT', 'INVESTIGATE', 'CONTAIN', 'REMEDIATE', 'RESOLVE'].map(stage => `<option ${item.response_stage === stage ? 'selected' : ''}>${stage}</option>`).join('')}</select></td><td class="mono">${formatTime(item.updated_at)}</td><td><button class="row-action" data-incident-id="${item.id}" type="button">Advance</button><button class="row-action timeline-action" data-incident-id="${item.id}" type="button">Timeline</button></td></tr>`).join('') : '<tr><td colspan="4" class="empty">No investigations yet.</td></tr>';
     target.querySelectorAll('.row-action:not(.timeline-action)').forEach(button => button.addEventListener('click', () => updateIncident(button.dataset.incidentId)));
     target.querySelectorAll('.timeline-action').forEach(button => button.addEventListener('click', () => loadTimeline(button.dataset.incidentId)));
 }
@@ -238,8 +272,8 @@ function openEvent(event) {
 }
 
 async function updateIncident(id) {
-    const select = document.querySelector(`.incident-status[data-incident-id="${id}"]`);
-    await fetch('/api/incidents', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ id, status: select.value }) });
+    const select = document.querySelector(`.incident-stage[data-incident-id="${id}"]`);
+    await fetch('/api/incidents', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ id, status: select.value === 'RESOLVE' ? 'RESOLVED' : 'INVESTIGATING', response_stage: select.value }) });
     loadOperations();
 }
 
@@ -262,13 +296,15 @@ document.querySelector('#password-input').addEventListener('input', async event 
     Object.entries(data.checks).forEach(([key, valid]) => document.querySelector(`[data-check="${key}"]`).classList.toggle('valid', valid));
 });
 
-document.querySelector('#ip-button').addEventListener('click', async () => {
+async function inspectIp(ip) {
     const target = document.querySelector('#ip-result');
+    document.querySelector('#ip-input').value = ip;
     const response = await fetch('/api/ip-info', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ ip: document.querySelector('#ip-input').value }) });
     const data = await response.json();
     if (!response.ok) { target.textContent = data.error; return; }
-    target.innerHTML = `<strong>${data.ip}</strong>${data.version} · ${data.scope}<br>${data.classification} · ${data.observed_events} observed event${data.observed_events === 1 ? '' : 's'}`;
-});
+    target.innerHTML = `<div class="ip-intel-head"><strong>${escapeHtml(data.ip)}</strong><b>${data.threat_score}/100</b></div><span>${escapeHtml(data.location.label)} · ${escapeHtml(data.classification)}</span><p>${escapeHtml(data.recommendation)}</p>${data.activity.length ? `<small>Recent activity: ${escapeHtml(data.activity[0].event_type)} · ${escapeHtml(data.activity[0].severity)}</small>` : '<small>No local activity history.</small>'}`;
+}
+document.querySelector('#ip-button').addEventListener('click', () => inspectIp(document.querySelector('#ip-input').value));
 
 async function postJson(url, payload) {
     const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify(payload) });

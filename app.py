@@ -42,6 +42,12 @@ DEMO_USER = "analyst"
 DEMO_PASSWORD_HASH = generate_password_hash(
     os.environ.get("DASHBOARD_PASSWORD", "analyst123"))
 SEVERITIES = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
+RESPONSE_STAGES = ["DETECT", "INVESTIGATE", "CONTAIN", "REMEDIATE", "RESOLVE"]
+THREAT_LOCATIONS = (
+    ("Amsterdam, NL", 52.3676, 4.9041), ("Frankfurt, DE", 50.1109, 8.6821),
+    ("Singapore, SG", 1.3521, 103.8198), ("Ashburn, US", 39.0438, -77.4874),
+    ("Sao Paulo, BR", -23.5505, -46.6333),
+)
 LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
@@ -52,6 +58,29 @@ def get_db() -> sqlite3.Connection:
     connection = sqlite3.connect(DATABASE)
     connection.row_factory = sqlite3.Row
     return connection
+
+
+def threat_score(address: str, event_count: int, highest_severity: str = "INFO", known_indicator: bool = False) -> int:
+    """Return a transparent offline score from local observations and severity."""
+    severity_weight = {"INFO": 4, "LOW": 12, "MEDIUM": 30, "HIGH": 55, "CRITICAL": 78}
+    try:
+        ip = ipaddress.ip_address(address)
+        scope_weight = 0 if ip.is_private or ip.is_loopback else 8
+    except ValueError:
+        scope_weight = 0
+    return min(100, severity_weight.get(highest_severity, 4) + min(event_count * 6, 18) + scope_weight + (18 if known_indicator else 0))
+
+
+def threat_location(address: str) -> dict[str, object]:
+    """Return a stable offline lab location; no IP is sent to a third party."""
+    try:
+        ip = ipaddress.ip_address(address)
+        if ip.is_private or ip.is_loopback or ip.is_link_local:
+            return {"label": "Local lab network", "latitude": 0, "longitude": 0, "local": True}
+    except ValueError:
+        return {"label": "Unknown", "latitude": 0, "longitude": 0, "local": False}
+    location = THREAT_LOCATIONS[int(hashlib.sha256(address.encode()).hexdigest(), 16) % len(THREAT_LOCATIONS)]
+    return {"label": location[0], "latitude": location[1], "longitude": location[2], "local": False}
 
 
 def initialize_database() -> None:
@@ -184,6 +213,12 @@ def initialize_database() -> None:
                 value TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS user_progress (
+                username TEXT PRIMARY KEY,
+                xp INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(username) REFERENCES users(username)
+            );
             CREATE INDEX IF NOT EXISTS events_timestamp_idx ON events(timestamp DESC);
             CREATE INDEX IF NOT EXISTS events_severity_idx ON events(severity);
             CREATE INDEX IF NOT EXISTS events_status_idx ON events(status);
@@ -212,6 +247,8 @@ def initialize_database() -> None:
         if "assignee" not in incident_columns:
             db.execute(
                 "ALTER TABLE incidents ADD COLUMN assignee TEXT NOT NULL DEFAULT ''")
+        if "response_stage" not in incident_columns:
+            db.execute("ALTER TABLE incidents ADD COLUMN response_stage TEXT NOT NULL DEFAULT 'DETECT'")
         indicator_columns = {row["name"]
                              for row in db.execute("PRAGMA table_info(indicators)")}
         for name, definition in {"source": "TEXT NOT NULL DEFAULT 'manual'", "confidence": "INTEGER NOT NULL DEFAULT 50", "expires_at": "TEXT", "status": "TEXT NOT NULL DEFAULT 'ACTIVE'"}.items():
@@ -492,7 +529,23 @@ def summary():
             "SELECT user, COUNT(*) total FROM events WHERE user != '-' GROUP BY user ORDER BY total DESC LIMIT 5").fetchall()
         rule_counts = db.execute(
             "SELECT rule_id, COUNT(*) total FROM alerts GROUP BY rule_id ORDER BY total DESC LIMIT 5").fetchall()
-    return jsonify({"total": total, "today": today_count, "open": open_count, "sources": sources, "critical": critical, "suspicious_ips": suspicious_ips, "counts": counts, "hourly": [dict(row) for row in reversed(hourly)], "top_sources": [dict(row) for row in top_sources], "top_users": [dict(row) for row in top_users], "rule_counts": [dict(row) for row in rule_counts], "events": [dict(row) for row in recent], "activity": [dict(row) for row in activity]})
+        threat_rows = db.execute("SELECT source_ip, COUNT(*) total, MAX(CASE severity WHEN 'CRITICAL' THEN 5 WHEN 'HIGH' THEN 4 WHEN 'MEDIUM' THEN 3 WHEN 'LOW' THEN 2 ELSE 1 END) max_weight FROM events GROUP BY source_ip ORDER BY max_weight DESC, total DESC LIMIT 8").fetchall()
+        attack_types = db.execute("SELECT event_type, COUNT(*) total FROM events GROUP BY event_type ORDER BY total DESC LIMIT 6").fetchall()
+        stages = {row["response_stage"]: row["total"] for row in db.execute("SELECT response_stage, COUNT(*) total FROM incidents GROUP BY response_stage")}
+        resolved_cases = db.execute("SELECT COUNT(*) FROM incidents WHERE response_stage = 'RESOLVE'").fetchone()[0]
+        analyst_activity = db.execute("SELECT COUNT(*) FROM activity_log WHERE actor = ?", (session["username"],)).fetchone()[0]
+    weight_to_severity = {1: "INFO", 2: "LOW", 3: "MEDIUM", 4: "HIGH", 5: "CRITICAL"}
+    threats = []
+    for row in threat_rows:
+        item = dict(row)
+        item["severity"] = weight_to_severity[item.pop("max_weight")]
+        item["score"] = threat_score(item["source_ip"], item["total"], item["severity"])
+        item.update(threat_location(item["source_ip"]))
+        threats.append(item)
+    xp = analyst_activity * 5 + resolved_cases * 60 + critical * 10
+    level = max(1, xp // 120 + 1)
+    achievements = [{"name": "First signal", "earned": total > 0}, {"name": "Threat hunter", "earned": suspicious_ips >= 3}, {"name": "Case closer", "earned": resolved_cases > 0}]
+    return jsonify({"total": total, "today": today_count, "open": open_count, "sources": sources, "critical": critical, "suspicious_ips": suspicious_ips, "counts": counts, "hourly": [dict(row) for row in reversed(hourly)], "top_sources": [dict(row) for row in top_sources], "top_users": [dict(row) for row in top_users], "rule_counts": [dict(row) for row in rule_counts], "attack_types": [dict(row) for row in attack_types], "threats": threats, "response_stages": [{"stage": stage, "total": stages.get(stage, 0)} for stage in RESPONSE_STAGES], "progress": {"xp": xp, "level": level, "next_level_xp": level * 120, "achievements": achievements}, "events": [dict(row) for row in recent], "activity": [dict(row) for row in activity]})
 
 
 @app.route("/api/assistant", methods=["POST"])
@@ -510,7 +563,7 @@ def assistant():
     if not question:
         answer = "Ask me about events, alerts, investigations, rules, or safe lab tools."
     elif any(word in question for word in ("critical", "urgent", "danger")):
-        answer = f"There are {critical} critical events. Start with the newest event in the event stream and open an investigation from its detail view."
+        answer = f"There are {critical} critical events. Recommended response: investigate the newest critical signal, contain the affected lab asset if activity persists, then record remediation evidence before resolving the case."
     elif any(word in question for word in ("investigation", "incident", "case")):
         answer = f"There are {open_incidents} open or investigating cases. Use the Investigations section to change status or export a CSV report."
     elif any(word in question for word in ("latest", "recent", "last")) and latest:
@@ -588,7 +641,12 @@ def ip_info():
     with get_db() as db:
         event_count = db.execute(
             "SELECT COUNT(*) FROM events WHERE source_ip = ?", (value,)).fetchone()[0]
-    return jsonify({"ip": value, "version": f"IPv{address.version}", "scope": "Private / lab" if private else "Public", "classification": "Reserved or local" if reserved else "Routable address", "observed_events": event_count})
+        history = db.execute("SELECT timestamp, event_type, severity, message FROM events WHERE source_ip = ? ORDER BY timestamp DESC LIMIT 6", (value,)).fetchall()
+        indicator = db.execute("SELECT confidence FROM indicators WHERE indicator_type = 'IP' AND value = ?", (value,)).fetchone()
+    highest = next((item["severity"] for item in history if item["severity"] in SEVERITIES), "INFO")
+    score = threat_score(value, event_count, highest, bool(indicator))
+    recommendation = "Block or isolate through the lab containment workflow." if score >= 70 else "Investigate linked events and monitor for recurrence." if score >= 35 else "Continue monitoring; no containment action is currently indicated."
+    return jsonify({"ip": value, "version": f"IPv{address.version}", "scope": "Private / lab" if private else "Public", "classification": "Reserved or local" if reserved else "Routable address", "observed_events": event_count, "threat_score": score, "location": threat_location(value), "recommendation": recommendation, "activity": [dict(item) for item in history]})
 
 
 @app.route("/api/ip-reputation", methods=["POST"])
@@ -1170,22 +1228,25 @@ def incidents():
     if request.method == "POST":
         with get_db() as db:
             now_text = datetime.now(timezone.utc).isoformat()
-            cursor = db.execute("INSERT INTO incidents (event_id, title, notes, status, assignee, updated_at) VALUES (?, ?, ?, ?, ?, ?)", (payload.get(
-                "event_id"), payload.get("title", "Investigation"), payload.get("notes", ""), "OPEN", payload.get("assignee", session["username"]), now_text))
+            cursor = db.execute("INSERT INTO incidents (event_id, title, notes, status, response_stage, assignee, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (payload.get(
+                "event_id"), payload.get("title", "Investigation"), payload.get("notes", ""), "OPEN", "DETECT", payload.get("assignee", session["username"]), now_text))
             incident_id = cursor.lastrowid
             db.execute("INSERT INTO incident_timeline (incident_id, actor, action, detail, created_at) VALUES (?, ?, ?, ?, ?)",
                        (incident_id, session["username"], "Investigation opened", payload.get("notes", ""), now_text))
         log_activity("Incident opened", f"Incident #{incident_id} created")
     elif request.method == "PATCH":
         status = payload.get("status", "OPEN").upper()
+        stage = payload.get("response_stage", "").upper()
         if status not in {"OPEN", "INVESTIGATING", "RESOLVED", "FALSE POSITIVE"}:
             return jsonify({"error": "Unsupported incident status."}), 400
+        if stage and stage not in RESPONSE_STAGES:
+            return jsonify({"error": "Unsupported incident response stage."}), 400
         with get_db() as db:
             now_text = datetime.now(timezone.utc).isoformat()
-            db.execute("UPDATE incidents SET status = ?, assignee = COALESCE(?, assignee), notes = COALESCE(?, notes), updated_at = ? WHERE id = ?",
-                       (status, payload.get("assignee"), payload.get("notes"), now_text, payload.get("id")))
+            db.execute("UPDATE incidents SET status = ?, response_stage = COALESCE(NULLIF(?, ''), response_stage), assignee = COALESCE(?, assignee), notes = COALESCE(?, notes), updated_at = ? WHERE id = ?",
+                       ("RESOLVED" if stage == "RESOLVE" else status, stage, payload.get("assignee"), payload.get("notes"), now_text, payload.get("id")))
             db.execute("INSERT INTO incident_timeline (incident_id, actor, action, detail, created_at) VALUES (?, ?, ?, ?, ?)",
-                       (payload.get("id"), session["username"], f"Status changed to {status}", payload.get("notes") or "", now_text))
+                       (payload.get("id"), session["username"], f"Response stage: {stage or status}", payload.get("notes") or "", now_text))
         log_activity("Incident updated",
                      f"Incident #{payload.get('id')} marked {status.lower()}")
     with get_db() as db:
