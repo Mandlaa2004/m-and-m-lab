@@ -184,6 +184,16 @@ def initialize_database() -> None:
                 value TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS events_timestamp_idx ON events(timestamp DESC);
+            CREATE INDEX IF NOT EXISTS events_severity_idx ON events(severity);
+            CREATE INDEX IF NOT EXISTS events_status_idx ON events(status);
+            CREATE INDEX IF NOT EXISTS events_source_ip_idx ON events(source_ip);
+            CREATE INDEX IF NOT EXISTS alerts_created_at_idx ON alerts(created_at DESC);
+            CREATE INDEX IF NOT EXISTS alerts_status_idx ON alerts(status);
+            CREATE INDEX IF NOT EXISTS activity_log_timestamp_idx ON activity_log(timestamp DESC);
+            CREATE INDEX IF NOT EXISTS incidents_updated_at_idx ON incidents(updated_at DESC);
+            CREATE INDEX IF NOT EXISTS notifications_user_created_idx ON notifications(username, created_at DESC);
+            CREATE INDEX IF NOT EXISTS incident_timeline_incident_created_idx ON incident_timeline(incident_id, created_at DESC);
             """
         )
         columns = {row["name"]

@@ -2,6 +2,7 @@ const severityColors = { CRITICAL: '#e56855', HIGH: '#f09a68', MEDIUM: '#d09a32'
 const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
 const escapeHtml = value => String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character]));
 const formatTime = value => new Date(value).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+const isAdmin = document.body.dataset.role === 'Admin';
 
 let summaryRequestInFlight = false;
 let notificationsRequestInFlight = false;
@@ -117,13 +118,12 @@ async function loadOperations() {
             loadAssets(),
             loadCollectors(),
             loadMetrics(),
-            loadUsers(),
             loadIndicators(),
             loadActivityFeed(),
             loadReports(),
-            loadNotificationPreferences(),
-            loadPlatformSettings()
+            loadNotificationPreferences()
         ]);
+        if (isAdmin) await Promise.all([loadUsers(), loadPlatformSettings()]);
     } finally {
         operationsRequestInFlight = false;
     }

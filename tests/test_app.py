@@ -14,7 +14,7 @@ def isolated_app(tmp_path, monkeypatch):
 
 def logged_in_client(isolated_app):
     client = isolated_app.test_client()
-    page = client.get('/login')
+    client.get('/login')
     with client.session_transaction() as session:
         token = session['csrf_token']
     response = client.post(
