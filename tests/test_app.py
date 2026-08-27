@@ -94,6 +94,18 @@ def test_alert_triage_and_incident_timeline(isolated_app):
     assert timeline.json[0]['action'] == 'Investigation opened'
 
 
+def test_event_detail_supports_alert_investigation(isolated_app):
+    client, _ = logged_in_client(isolated_app)
+    with client.application.app_context():
+        app_module.record_event(
+            'Log detection', '10.0.0.45', 'HIGH', 'Inspection evidence')
+    event_id = client.get('/api/events?q=Inspection evidence').json[0]['id']
+    response = client.get(f'/api/events/{event_id}')
+    assert response.status_code == 200
+    assert response.json['message'] == 'Inspection evidence'
+    assert client.get('/api/events/999999').status_code == 404
+
+
 def test_collector_rejects_external_path_and_health_is_public(isolated_app):
     client, token = logged_in_client(isolated_app)
     response = client.post('/api/collectors', json={

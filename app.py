@@ -536,6 +536,16 @@ def events():
     return jsonify([dict(row) for row in rows])
 
 
+@app.route("/api/events/<int:event_id>")
+@login_required
+def event_detail(event_id: int):
+    with get_db() as db:
+        event = db.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+    if event is None:
+        return jsonify({"error": "Event not found."}), 404
+    return jsonify(dict(event))
+
+
 @app.route("/api/password-check", methods=["POST"])
 @login_required
 def password_check():

@@ -146,7 +146,7 @@ async function loadTimeline(id) {
 function renderAlerts(items) {
     document.querySelector('#alert-count').textContent = `${items.length} alert${items.length === 1 ? '' : 's'}`;
     document.querySelector('#alerts-list').innerHTML = items.length ? items.slice(0, 8).map(item => `<button class="alert-item" data-event-id="${item.event_id}" type="button"><span class="severity severity-${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span><span><strong>${escapeHtml(item.name || 'Detection alert')}</strong><small>${escapeHtml(item.source_ip)} · ${escapeHtml(item.rule_id || 'manual')} · ${escapeHtml(item.mitre_attack || 'unmapped')}</small></span></button>`).join('') : '<p class="empty">No alerts recorded yet.</p>';
-    document.querySelectorAll('.alert-item').forEach(item => item.addEventListener('click', () => { document.querySelector('#events').scrollIntoView({ behavior: 'smooth' }); }));
+    document.querySelectorAll('.alert-item').forEach(item => item.addEventListener('click', () => inspectEvent(item.dataset.eventId)));
     document.querySelector('#triage-list').innerHTML = items.slice(0, 6).map(item => `<div class="triage-item"><div><strong>${escapeHtml(item.name || 'Detection alert')}</strong><span>${escapeHtml(item.source_ip)} · ${escapeHtml(item.severity)}</span></div><select data-alert-id="${item.id}" class="triage-status"><option ${item.status === 'OPEN' || item.status === 'NEW' ? 'selected' : ''}>NEW</option><option ${item.status === 'ACKNOWLEDGED' ? 'selected' : ''}>ACKNOWLEDGED</option><option ${item.status === 'IN PROGRESS' ? 'selected' : ''}>IN PROGRESS</option><option ${item.status === 'RESOLVED' ? 'selected' : ''}>RESOLVED</option><option ${item.status === 'FALSE POSITIVE' ? 'selected' : ''}>FALSE POSITIVE</option></select></div>`).join('') || '<p class="empty">No alerts in queue.</p>';
     document.querySelectorAll('.triage-status').forEach(select => select.addEventListener('change', () => updateAlert(select.dataset.alertId, select.value)));
 }
@@ -223,6 +223,12 @@ function renderRules(items) {
 }
 
 let selectedEvent = null;
+async function inspectEvent(id) {
+    const response = await fetch(`/api/events/${id}`);
+    if (!response.ok) return;
+    openEvent(await response.json());
+}
+
 function openEvent(event) {
     if (!event) return;
     selectedEvent = event;
