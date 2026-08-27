@@ -274,9 +274,9 @@ a {
 }
 
 .app-shell {
-    max-width: 1440px;
+    max-width: 1540px;
     margin: auto;
-    padding: 47px 4.5vw 70px;
+    padding: 38px 4.5vw 70px;
     animation: page-rise .55s cubic-bezier(.2, .8, .2, 1);
 }
 
@@ -294,13 +294,37 @@ a {
     display: flex;
     justify-content: space-between;
     align-items: end;
-    margin-bottom: 35px;
+    min-height: 138px;
+    margin-bottom: 18px;
+    padding: 28px 30px;
+    border: 1px solid #d8e5f2;
+    border-radius: 16px;
+    background:
+        linear-gradient(115deg, rgba(255, 255, 255, .97), rgba(236, 248, 251, .9)),
+        linear-gradient(90deg, var(--electric), var(--neon));
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    position: relative;
+}
+
+.welcome-row::after {
+    content: '';
+    position: absolute;
+    right: -40px;
+    bottom: -86px;
+    width: 260px;
+    height: 260px;
+    border: 36px solid rgba(70, 240, 213, .12);
+    border-radius: 50%;
+    pointer-events: none;
 }
 
 .welcome-actions {
     display: flex;
     align-items: center;
     gap: 12px;
+    position: relative;
+    z-index: 1;
 }
 
 .hero-badge {
@@ -355,8 +379,8 @@ a {
 }
 
 .welcome-row h1 {
-    font-size: 32px;
-    letter-spacing: -1.5px;
+    font: 700 34px 'Syne', sans-serif;
+    letter-spacing: 0;
     margin: 0 0 7px;
 }
 
@@ -394,13 +418,14 @@ a {
 
 .stat-grid {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    gap: 13px;
+    grid-template-columns: minmax(220px, 1.8fr) repeat(5, minmax(130px, 1fr));
+    gap: 14px;
     margin-bottom: 18px;
 }
 
 .stat-card {
-    min-height: 137px;
+    grid-column: auto;
+    min-height: 112px;
     padding: 19px 21px;
     background: linear-gradient(180deg, #ffffff, #fbfdff);
     border: 1px solid var(--line);
@@ -409,13 +434,27 @@ a {
     transition: transform .2s ease, box-shadow .2s ease;
 }
 
+.stat-events {
+    grid-column: auto;
+}
+
+.stat-healthy {
+    background: linear-gradient(145deg, #effff9, #e5faf2);
+    border-color: #c8ebdc;
+}
+
+.stat-critical {
+    background: linear-gradient(145deg, #fff7f5, #ffebe7);
+    border-color: #f6d3ca;
+}
+
 .stat-card:hover {
     transform: translateY(-2px);
     box-shadow: 0 22px 42px rgba(17, 25, 39, .12);
 }
 
 .stat-primary {
-    background: var(--ink);
+    background: linear-gradient(135deg, #102139, #13536a);
     color: #fff;
     border-color: var(--ink);
 }
@@ -466,8 +505,8 @@ a {
 
 .main-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.65fr) minmax(300px, .85fr);
-    gap: 18px;
+    grid-template-columns: minmax(0, 1.85fr) minmax(350px, .75fr);
+    gap: 14px;
 }
 
 .panel {
@@ -485,7 +524,7 @@ a {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 22px 23px 16px;
+    padding: 20px 23px 15px;
 }
 
 .panel h2 {
