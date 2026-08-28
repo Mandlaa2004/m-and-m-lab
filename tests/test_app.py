@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 import app as app_module
@@ -7,6 +9,8 @@ import app as app_module
 def isolated_app(tmp_path, monkeypatch):
     database = tmp_path / "test.db"
     monkeypatch.setattr(app_module, "DATABASE", database)
+    monkeypatch.setattr(app_module, "BACKUP_DIR", tmp_path / "backups")
+    monkeypatch.setattr(app_module, "MUTATION_REQUESTS", {})
     app_module.initialize_database()
     app_module.app.config.update(TESTING=True)
     return app_module.app
@@ -115,18 +119,22 @@ def test_threat_intelligence_summary_and_response_workflow(isolated_app):
     assert len(summary['response_stages']) == 5
     assert summary['threats'][0]['score'] >= 78
     assert summary['progress']['level'] >= 1
-    intelligence = client.post('/api/ip-info', json={'ip': '185.220.101.14'}, headers={'X-CSRF-Token': token})
+    intelligence = client.post(
+        '/api/ip-info', json={'ip': '185.220.101.14'}, headers={'X-CSRF-Token': token})
     assert intelligence.json['threat_score'] >= 78
     assert intelligence.json['activity']
-    incident = client.post('/api/incidents', json={'title': 'Workflow test'}, headers={'X-CSRF-Token': token}).json[0]
-    response = client.patch('/api/incidents', json={'id': incident['id'], 'status': 'INVESTIGATING', 'response_stage': 'CONTAIN'}, headers={'X-CSRF-Token': token})
+    incident = client.post(
+        '/api/incidents', json={'title': 'Workflow test'}, headers={'X-CSRF-Token': token}).json[0]
+    response = client.patch('/api/incidents', json={
+                            'id': incident['id'], 'status': 'INVESTIGATING', 'response_stage': 'CONTAIN'}, headers={'X-CSRF-Token': token})
     assert response.status_code == 200
     assert response.json[0]['response_stage'] == 'CONTAIN'
 
 
 def test_operational_workflows_store_evidence_and_saved_views(isolated_app):
     client, token = logged_in_client(isolated_app)
-    incident = client.post('/api/incidents', json={'title': 'Evidence case'}, headers={'X-CSRF-Token': token}).json[0]
+    incident = client.post(
+        '/api/incidents', json={'title': 'Evidence case'}, headers={'X-CSRF-Token': token}).json[0]
     evidence = client.post(f"/api/incidents/{incident['id']}/evidence", json={
         'evidence_type': 'LOG', 'content': 'Failed login from a correlated source'}, headers={'X-CSRF-Token': token})
     assert evidence.status_code == 200
@@ -180,3 +188,67 @@ def test_login_attempts_create_notifications(isolated_app):
                == 'HIGH' for item in notifications)
     assert any(item['kind'] == 'authentication' and item['title']
                == 'User signed in' for item in notifications)
+
+
+def test_admin_can_backup_and_prune_events(isolated_app):
+    client = isolated_app.test_client()
+    client.get('/login')
+    with client.session_transaction() as session:
+        token = session['csrf_token']
+    client.post('/login', data={'username': 'admin',
+                'password': 'admin123', 'csrf_token': token})
+    with client.session_transaction() as session:
+        token = session['csrf_token']
+    with client.application.app_context():
+        app_module.record_event(
+            'Old resolved event', '10.0.0.60', 'LOW', 'Stale evidence')
+        with app_module.get_db() as db:
+            db.execute("UPDATE events SET status = 'Resolved', timestamp = ? WHERE source_ip = ?",
+                       ((datetime.now(timezone.utc) - timedelta(days=200)
+                         ).isoformat(), '10.0.0.60'))
+    backup = client.post('/api/maintenance/backup',
+                         headers={'X-CSRF-Token': token})
+    assert backup.status_code == 201
+    assert client.get('/api/maintenance/backups').json[0]['name'] == backup.json['name']
+    prune = client.post('/api/maintenance/prune', json={
+                        'retention_days': 30}, headers={'X-CSRF-Token': token})
+    assert prune.status_code == 200
+    assert prune.json['deleted_events'] == 1
+
+
+def test_mutation_rate_limit_returns_429(isolated_app):
+    client, token = logged_in_client(isolated_app)
+    responses = [client.post('/api/incidents', json={'title': f'Case {i}'},
+                             headers={'X-CSRF-Token': token}) for i in range(35)]
+    assert any(response.status_code == 429 for response in responses)
+
+
+def test_events_and_alerts_are_paginated(isolated_app):
+    client, token = logged_in_client(isolated_app)
+    with client.application.app_context():
+        for i in range(5):
+            app_module.record_event(
+                'Log detection', f'10.0.0.{i}', 'HIGH', 'Paginated evidence')
+    response = client.get('/api/events?per_page=2')
+    assert len(response.json) == 2
+    assert int(response.headers['X-Total-Count']) >= 5
+    alerts_response = client.get('/api/alerts?per_page=2')
+    assert len(alerts_response.json) <= 2
+    assert 'X-Total-Count' in alerts_response.headers
+
+
+def test_critical_event_dispatches_external_webhook(isolated_app, monkeypatch):
+    monkeypatch.setenv('NOTIFY_WEBHOOK_URL', 'https://example.invalid/webhook')
+    calls = []
+    monkeypatch.setattr(app_module, 'urlopen',
+                        lambda request, timeout=3: calls.append(request))
+    with isolated_app.test_client() as client:
+        client.get('/login')
+        with client.session_transaction() as session:
+            token = session['csrf_token']
+        client.post('/login', data={'username': 'analyst',
+                    'password': 'analyst123', 'csrf_token': token})
+        with client.application.app_context():
+            app_module.record_event(
+                'Malware signature', '10.0.0.70', 'CRITICAL', 'Webhook test evidence')
+    assert calls

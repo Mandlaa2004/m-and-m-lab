@@ -6,11 +6,13 @@ import io
 import ipaddress
 import os
 import re
+import smtplib
 import sqlite3
 import socket
 import time
 import logging
 import json
+from email.message import EmailMessage
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 from urllib.parse import urlparse
@@ -26,6 +28,9 @@ IS_PRODUCTION = os.environ.get("FLASK_ENV") == "production"
 DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR)).expanduser()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DATABASE = DATA_DIR / "security_dashboard.db"
+BACKUP_DIR = DATA_DIR / "backups"
+MAX_BACKUPS_RETAINED = 10
+DEFAULT_RETENTION_DAYS = 90
 app = Flask(__name__)
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 31_536_000 if IS_PRODUCTION else 0
 app.config["SECRET_KEY"] = os.environ.get(
@@ -52,6 +57,9 @@ THREAT_LOCATIONS = (
     ("Sao Paulo, BR", -23.5505, -46.6333),
 )
 LOGIN_ATTEMPTS: dict[str, list[float]] = {}
+MUTATION_REQUESTS: dict[str, list[float]] = {}
+MUTATION_RATE_LIMIT = 30
+MUTATION_RATE_WINDOW_SECONDS = 10
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("m-and-m-lab")
@@ -65,7 +73,8 @@ def get_db() -> sqlite3.Connection:
 
 def threat_score(address: str, event_count: int, highest_severity: str = "INFO", known_indicator: bool = False) -> int:
     """Return a transparent offline score from local observations and severity."""
-    severity_weight = {"INFO": 4, "LOW": 12, "MEDIUM": 30, "HIGH": 55, "CRITICAL": 78}
+    severity_weight = {"INFO": 4, "LOW": 12,
+                       "MEDIUM": 30, "HIGH": 55, "CRITICAL": 78}
     try:
         ip = ipaddress.ip_address(address)
         scope_weight = 0 if ip.is_private or ip.is_loopback else 8
@@ -82,7 +91,8 @@ def threat_location(address: str) -> dict[str, object]:
             return {"label": "Local lab network", "latitude": 0, "longitude": 0, "local": True}
     except ValueError:
         return {"label": "Unknown", "latitude": 0, "longitude": 0, "local": False}
-    location = THREAT_LOCATIONS[int(hashlib.sha256(address.encode()).hexdigest(), 16) % len(THREAT_LOCATIONS)]
+    location = THREAT_LOCATIONS[int(hashlib.sha256(
+        address.encode()).hexdigest(), 16) % len(THREAT_LOCATIONS)]
     return {"label": location[0], "latitude": location[1], "longitude": location[2], "local": False}
 
 
@@ -90,19 +100,25 @@ def external_ip_intelligence(address: str) -> list[dict[str, object]]:
     """Query configured providers only; all failures retain the local offline result."""
     providers = []
     for name, url, header in (
-        ("AbuseIPDB", f"https://api.abuseipdb.com/api/v2/check?ipAddress={address}&maxAgeInDays=90", "ABUSEIPDB_API_KEY"),
-        ("VirusTotal", f"https://www.virustotal.com/api/v3/ip_addresses/{address}", "VIRUSTOTAL_API_KEY"),
-        ("AlienVault OTX", f"https://otx.alienvault.com/api/v1/indicators/IPv4/{address}/general", "OTX_API_KEY"),
+        ("AbuseIPDB",
+         f"https://api.abuseipdb.com/api/v2/check?ipAddress={address}&maxAgeInDays=90", "ABUSEIPDB_API_KEY"),
+        ("VirusTotal",
+         f"https://www.virustotal.com/api/v3/ip_addresses/{address}", "VIRUSTOTAL_API_KEY"),
+        ("AlienVault OTX",
+         f"https://otx.alienvault.com/api/v1/indicators/IPv4/{address}/general", "OTX_API_KEY"),
     ):
         token = os.environ.get(header)
         if not token:
             continue
         try:
-            request_headers = {"Accept": "application/json", "Key": token} if name == "AbuseIPDB" else {"Accept": "application/json", "X-Apikey" if name == "VirusTotal" else "X-OTX-API-KEY": token}
+            request_headers = {"Accept": "application/json", "Key": token} if name == "AbuseIPDB" else {
+                "Accept": "application/json", "X-Apikey" if name == "VirusTotal" else "X-OTX-API-KEY": token}
             with urlopen(Request(url, headers=request_headers), timeout=3) as response:
-                providers.append({"provider": name, "available": True, "data": json.loads(response.read().decode())})
+                providers.append({"provider": name, "available": True, "data": json.loads(
+                    response.read().decode())})
         except (URLError, TimeoutError, ValueError, OSError):
-            providers.append({"provider": name, "available": False, "data": {}})
+            providers.append(
+                {"provider": name, "available": False, "data": {}})
     return providers
 
 
@@ -293,7 +309,8 @@ def initialize_database() -> None:
             db.execute(
                 "ALTER TABLE incidents ADD COLUMN assignee TEXT NOT NULL DEFAULT ''")
         if "response_stage" not in incident_columns:
-            db.execute("ALTER TABLE incidents ADD COLUMN response_stage TEXT NOT NULL DEFAULT 'DETECT'")
+            db.execute(
+                "ALTER TABLE incidents ADD COLUMN response_stage TEXT NOT NULL DEFAULT 'DETECT'")
         indicator_columns = {row["name"]
                              for row in db.execute("PRAGMA table_info(indicators)")}
         for name, definition in {"source": "TEXT NOT NULL DEFAULT 'manual'", "confidence": "INTEGER NOT NULL DEFAULT 50", "expires_at": "TEXT", "status": "TEXT NOT NULL DEFAULT 'ACTIVE'"}.items():
@@ -366,6 +383,97 @@ def create_notification(title: str, message: str, severity: str = "INFO", kind: 
     with get_db() as db:
         db.execute("INSERT INTO notifications (username, title, message, severity, kind, link, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                    (username, title, message, severity, kind, link, datetime.now(timezone.utc).isoformat()))
+    if severity in {"HIGH", "CRITICAL"}:
+        dispatch_external_notification(title, message, severity)
+
+
+def dispatch_external_notification(title: str, message: str, severity: str) -> None:
+    """Best-effort delivery to configured external channels; failures never break the request."""
+    slack_url = os.environ.get("SLACK_WEBHOOK_URL")
+    webhook_url = os.environ.get("NOTIFY_WEBHOOK_URL")
+    text = f"[{severity}] {title}: {message}"
+    if slack_url:
+        try:
+            body = json.dumps({"text": text}).encode()
+            urlopen(Request(slack_url, data=body, headers={
+                    "Content-Type": "application/json"}), timeout=3)
+        except (URLError, TimeoutError, OSError):
+            logger.warning("Slack notification delivery failed")
+    if webhook_url:
+        try:
+            body = json.dumps(
+                {"title": title, "message": message, "severity": severity}).encode()
+            urlopen(Request(webhook_url, data=body, headers={
+                    "Content-Type": "application/json"}), timeout=3)
+        except (URLError, TimeoutError, OSError):
+            logger.warning("Webhook notification delivery failed")
+    smtp_host = os.environ.get("SMTP_HOST")
+    notify_to = os.environ.get("NOTIFY_EMAIL_TO")
+    if smtp_host and notify_to:
+        try:
+            email = EmailMessage()
+            email["Subject"] = f"M & M Lab: {title}"
+            email["From"] = os.environ.get(
+                "SMTP_FROM", "alerts@m-and-m-lab.local")
+            email["To"] = notify_to
+            email.set_content(text)
+            with smtplib.SMTP(smtp_host, int(os.environ.get("SMTP_PORT", "587")), timeout=5) as server:
+                if os.environ.get("SMTP_USE_TLS", "1") == "1":
+                    server.starttls()
+                smtp_user = os.environ.get("SMTP_USERNAME")
+                if smtp_user:
+                    server.login(smtp_user, os.environ.get(
+                        "SMTP_PASSWORD", ""))
+                server.send_message(email)
+        except (smtplib.SMTPException, OSError, TimeoutError):
+            logger.warning("Email notification delivery failed")
+
+
+def create_backup() -> Path:
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    destination = BACKUP_DIR / \
+        f"backup-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.db"
+    source = sqlite3.connect(DATABASE)
+    try:
+        target = sqlite3.connect(destination)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+    finally:
+        source.close()
+    backups = sorted(BACKUP_DIR.glob("backup-*.db"), reverse=True)
+    for stale in backups[MAX_BACKUPS_RETAINED:]:
+        stale.unlink(missing_ok=True)
+    return destination
+
+
+def get_retention_days() -> int:
+    with get_db() as db:
+        row = db.execute(
+            "SELECT value FROM platform_settings WHERE name = 'retention_days'").fetchone()
+    try:
+        return int(row["value"]) if row else DEFAULT_RETENTION_DAYS
+    except (TypeError, ValueError):
+        return DEFAULT_RETENTION_DAYS
+
+
+def prune_old_events(retention_days: int) -> int:
+    """Delete resolved events (and their alerts) older than the retention window."""
+    cutoff = (datetime.now(timezone.utc) -
+              timedelta(days=retention_days)).isoformat()
+    with get_db() as db:
+        stale_ids = [row["id"] for row in db.execute(
+            "SELECT id FROM events WHERE status = 'Resolved' AND timestamp < ?", (cutoff,))]
+        if stale_ids:
+            placeholders = ",".join("?" * len(stale_ids))
+            db.execute(
+                f"DELETE FROM alerts WHERE event_id IN ({placeholders})", stale_ids)
+            db.execute(
+                f"DELETE FROM events WHERE id IN ({placeholders})", stale_ids)
+        db.execute(
+            "DELETE FROM activity_log WHERE timestamp < ?", (cutoff,))
+    return len(stale_ids)
 
 
 def record_event(event_type: str, source_ip: str, severity: str, message: str, user: str = "scanner") -> None:
@@ -442,6 +550,14 @@ def inject_security_context():
 @app.before_request
 def protect_mutations():
     if request.method in {"POST", "PATCH", "PUT", "DELETE"} and request.endpoint != "login":
+        identity = session.get("username") or request.remote_addr or "unknown"
+        now = time.monotonic()
+        recent = [stamp for stamp in MUTATION_REQUESTS.get(
+            identity, []) if now - stamp < MUTATION_RATE_WINDOW_SECONDS]
+        if len(recent) >= MUTATION_RATE_LIMIT:
+            return jsonify({"error": "Too many requests. Slow down and try again shortly."}), 429
+        recent.append(now)
+        MUTATION_REQUESTS[identity] = recent
         expected = session.get("csrf_token")
         supplied = request.headers.get(
             "X-CSRF-Token") or request.form.get("csrf_token")
@@ -574,22 +690,30 @@ def summary():
             "SELECT user, COUNT(*) total FROM events WHERE user != '-' GROUP BY user ORDER BY total DESC LIMIT 5").fetchall()
         rule_counts = db.execute(
             "SELECT rule_id, COUNT(*) total FROM alerts GROUP BY rule_id ORDER BY total DESC LIMIT 5").fetchall()
-        threat_rows = db.execute("SELECT source_ip, COUNT(*) total, MAX(CASE severity WHEN 'CRITICAL' THEN 5 WHEN 'HIGH' THEN 4 WHEN 'MEDIUM' THEN 3 WHEN 'LOW' THEN 2 ELSE 1 END) max_weight FROM events GROUP BY source_ip ORDER BY max_weight DESC, total DESC LIMIT 8").fetchall()
-        attack_types = db.execute("SELECT event_type, COUNT(*) total FROM events GROUP BY event_type ORDER BY total DESC LIMIT 6").fetchall()
-        stages = {row["response_stage"]: row["total"] for row in db.execute("SELECT response_stage, COUNT(*) total FROM incidents GROUP BY response_stage")}
-        resolved_cases = db.execute("SELECT COUNT(*) FROM incidents WHERE response_stage = 'RESOLVE'").fetchone()[0]
-        analyst_activity = db.execute("SELECT COUNT(*) FROM activity_log WHERE actor = ?", (session["username"],)).fetchone()[0]
-    weight_to_severity = {1: "INFO", 2: "LOW", 3: "MEDIUM", 4: "HIGH", 5: "CRITICAL"}
+        threat_rows = db.execute(
+            "SELECT source_ip, COUNT(*) total, MAX(CASE severity WHEN 'CRITICAL' THEN 5 WHEN 'HIGH' THEN 4 WHEN 'MEDIUM' THEN 3 WHEN 'LOW' THEN 2 ELSE 1 END) max_weight FROM events GROUP BY source_ip ORDER BY max_weight DESC, total DESC LIMIT 8").fetchall()
+        attack_types = db.execute(
+            "SELECT event_type, COUNT(*) total FROM events GROUP BY event_type ORDER BY total DESC LIMIT 6").fetchall()
+        stages = {row["response_stage"]: row["total"] for row in db.execute(
+            "SELECT response_stage, COUNT(*) total FROM incidents GROUP BY response_stage")}
+        resolved_cases = db.execute(
+            "SELECT COUNT(*) FROM incidents WHERE response_stage = 'RESOLVE'").fetchone()[0]
+        analyst_activity = db.execute(
+            "SELECT COUNT(*) FROM activity_log WHERE actor = ?", (session["username"],)).fetchone()[0]
+    weight_to_severity = {1: "INFO", 2: "LOW",
+                          3: "MEDIUM", 4: "HIGH", 5: "CRITICAL"}
     threats = []
     for row in threat_rows:
         item = dict(row)
         item["severity"] = weight_to_severity[item.pop("max_weight")]
-        item["score"] = threat_score(item["source_ip"], item["total"], item["severity"])
+        item["score"] = threat_score(
+            item["source_ip"], item["total"], item["severity"])
         item.update(threat_location(item["source_ip"]))
         threats.append(item)
     xp = analyst_activity * 5 + resolved_cases * 60 + critical * 10
     level = max(1, xp // 120 + 1)
-    achievements = [{"name": "First signal", "earned": total > 0}, {"name": "Threat hunter", "earned": suspicious_ips >= 3}, {"name": "Case closer", "earned": resolved_cases > 0}]
+    achievements = [{"name": "First signal", "earned": total > 0}, {"name": "Threat hunter",
+                                                                    "earned": suspicious_ips >= 3}, {"name": "Case closer", "earned": resolved_cases > 0}]
     return jsonify({"total": total, "today": today_count, "open": open_count, "sources": sources, "critical": critical, "suspicious_ips": suspicious_ips, "counts": counts, "hourly": [dict(row) for row in reversed(hourly)], "top_sources": [dict(row) for row in top_sources], "top_users": [dict(row) for row in top_users], "rule_counts": [dict(row) for row in rule_counts], "attack_types": [dict(row) for row in attack_types], "threats": threats, "response_stages": [{"stage": stage, "total": stages.get(stage, 0)} for stage in RESPONSE_STAGES], "progress": {"xp": xp, "level": level, "next_level_xp": level * 120, "achievements": achievements}, "events": [dict(row) for row in recent], "activity": [dict(row) for row in activity]})
 
 
@@ -638,10 +762,19 @@ def events():
             "(event_type LIKE ? OR source_ip LIKE ? OR user LIKE ? OR message LIKE ?)")
         values.extend([f"%{query}%"] * 4)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    page = max(1, request.args.get("page", 1, type=int))
+    per_page = min(200, max(1, request.args.get("per_page", 100, type=int)))
     with get_db() as db:
+        total = db.execute(
+            f"SELECT COUNT(*) FROM events {where}", values).fetchone()[0]
         rows = db.execute(
-            f"SELECT * FROM events {where} ORDER BY timestamp DESC", values).fetchall()
-    return jsonify([dict(row) for row in rows])
+            f"SELECT * FROM events {where} ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            [*values, per_page, (page - 1) * per_page]).fetchall()
+    response = jsonify([dict(row) for row in rows])
+    response.headers["X-Total-Count"] = str(total)
+    response.headers["X-Page"] = str(page)
+    response.headers["X-Per-Page"] = str(per_page)
+    return response
 
 
 @app.route("/api/events/<int:event_id>")
@@ -686,9 +819,12 @@ def ip_info():
     with get_db() as db:
         event_count = db.execute(
             "SELECT COUNT(*) FROM events WHERE source_ip = ?", (value,)).fetchone()[0]
-        history = db.execute("SELECT timestamp, event_type, severity, message FROM events WHERE source_ip = ? ORDER BY timestamp DESC LIMIT 6", (value,)).fetchall()
-        indicator = db.execute("SELECT confidence FROM indicators WHERE indicator_type = 'IP' AND value = ?", (value,)).fetchone()
-    highest = next((item["severity"] for item in history if item["severity"] in SEVERITIES), "INFO")
+        history = db.execute(
+            "SELECT timestamp, event_type, severity, message FROM events WHERE source_ip = ? ORDER BY timestamp DESC LIMIT 6", (value,)).fetchall()
+        indicator = db.execute(
+            "SELECT confidence FROM indicators WHERE indicator_type = 'IP' AND value = ?", (value,)).fetchone()
+    highest = next((item["severity"]
+                   for item in history if item["severity"] in SEVERITIES), "INFO")
     score = threat_score(value, event_count, highest, bool(indicator))
     recommendation = "Block or isolate through the lab containment workflow." if score >= 70 else "Investigate linked events and monitor for recurrence." if score >= 35 else "Continue monitoring; no containment action is currently indicated."
     return jsonify({"ip": value, "version": f"IPv{address.version}", "scope": "Private / lab" if private else "Public", "classification": "Reserved or local" if reserved else "Routable address", "observed_events": event_count, "threat_score": score, "location": threat_location(value), "recommendation": recommendation, "activity": [dict(item) for item in history], "providers": external_ip_intelligence(value) if not private else []})
@@ -975,7 +1111,8 @@ def assets():
         log_activity("Asset added", f"Registered asset {name} ({ip_address})")
         return jsonify({"id": asset_id}), 201
     with get_db() as db:
-        rows = db.execute("SELECT assets.*, COUNT(events.id) AS event_count, SUM(CASE WHEN events.timestamp >= ? THEN 1 ELSE 0 END) AS recent_event_count FROM assets LEFT JOIN events ON events.source_ip = assets.ip_address GROUP BY assets.id ORDER BY assets.criticality DESC, assets.name", ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),)).fetchall()
+        rows = db.execute("SELECT assets.*, COUNT(events.id) AS event_count, SUM(CASE WHEN events.timestamp >= ? THEN 1 ELSE 0 END) AS recent_event_count FROM assets LEFT JOIN events ON events.source_ip = assets.ip_address GROUP BY assets.id ORDER BY assets.criticality DESC, assets.name",
+                          ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),)).fetchall()
     weights = {"LOW": 25, "MEDIUM": 50, "HIGH": 75, "CRITICAL": 95}
     result = []
     for row in rows:
@@ -1150,23 +1287,34 @@ def platform_settings():
 @app.route("/api/alerts")
 @login_required
 def alerts():
+    page = max(1, request.args.get("page", 1, type=int))
+    per_page = min(200, max(1, request.args.get("per_page", 100, type=int)))
     with get_db() as db:
-        rows = db.execute("SELECT alerts.*, detection_rules.name, detection_rules.mitre_attack, events.source_ip, events.user, events.severity FROM alerts LEFT JOIN detection_rules ON detection_rules.rule_id = alerts.rule_id JOIN events ON events.id = alerts.event_id ORDER BY alerts.created_at DESC LIMIT 100").fetchall()
-    sla_minutes = {"CRITICAL": 15, "HIGH": 60, "MEDIUM": 240, "LOW": 480, "INFO": 1440}
+        total = db.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
+        rows = db.execute("SELECT alerts.*, detection_rules.name, detection_rules.mitre_attack, events.source_ip, events.user, events.severity FROM alerts LEFT JOIN detection_rules ON detection_rules.rule_id = alerts.rule_id JOIN events ON events.id = alerts.event_id ORDER BY alerts.created_at DESC LIMIT ? OFFSET ?",
+                          (per_page, (page - 1) * per_page)).fetchall()
+    sla_minutes = {"CRITICAL": 15, "HIGH": 60,
+                   "MEDIUM": 240, "LOW": 480, "INFO": 1440}
     now = datetime.now(timezone.utc)
     result = []
     for row in rows:
         item = dict(row)
         created = datetime.fromisoformat(item["created_at"])
-        acknowledged = datetime.fromisoformat(item["acknowledged_at"]) if item["acknowledged_at"] else None
+        acknowledged = datetime.fromisoformat(
+            item["acknowledged_at"]) if item["acknowledged_at"] else None
         limit = sla_minutes.get(item["severity"], 240)
         elapsed = (acknowledged or now) - created
         item["sla_minutes"] = limit
-        item["time_to_ack_minutes"] = round(elapsed.total_seconds() / 60, 1) if acknowledged else None
+        item["time_to_ack_minutes"] = round(
+            elapsed.total_seconds() / 60, 1) if acknowledged else None
         item["overdue"] = not acknowledged and elapsed.total_seconds() > limit * 60
         item["escalation"] = "ESCALATED" if item["overdue"] else "ASSIGNED" if item["assignee"] else "UNASSIGNED"
         result.append(item)
-    return jsonify(result)
+    response = jsonify(result)
+    response.headers["X-Total-Count"] = str(total)
+    response.headers["X-Page"] = str(page)
+    response.headers["X-Per-Page"] = str(per_page)
+    return response
 
 
 @app.route("/api/rules", methods=["GET", "PATCH"])
@@ -1291,19 +1439,24 @@ def incident_evidence(incident_id: int):
         if evidence_type not in {"NOTE", "LOG", "HASH", "EVENT"} or not content:
             return jsonify({"error": "Provide a note, log excerpt, hash, or event reference."}), 400
         with get_db() as db:
-            db.execute("INSERT INTO incident_evidence (incident_id, evidence_type, content, related_event_id, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)", (incident_id, evidence_type, content[:4000], payload.get("related_event_id"), session["username"], datetime.now(timezone.utc).isoformat()))
-        log_activity("Evidence attached", f"Attached {evidence_type.lower()} evidence to incident #{incident_id}")
+            db.execute("INSERT INTO incident_evidence (incident_id, evidence_type, content, related_event_id, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                       (incident_id, evidence_type, content[:4000], payload.get("related_event_id"), session["username"], datetime.now(timezone.utc).isoformat()))
+        log_activity("Evidence attached",
+                     f"Attached {evidence_type.lower()} evidence to incident #{incident_id}")
     with get_db() as db:
-        rows = db.execute("SELECT * FROM incident_evidence WHERE incident_id = ? ORDER BY created_at DESC", (incident_id,)).fetchall()
+        rows = db.execute(
+            "SELECT * FROM incident_evidence WHERE incident_id = ? ORDER BY created_at DESC", (incident_id,)).fetchall()
     return jsonify([dict(row) for row in rows])
 
 
 @app.route("/api/mitre-coverage")
 @login_required
 def mitre_coverage():
-    expected = {"T1110": "Brute Force", "T1078": "Valid Accounts", "T1046": "Network Service Discovery", "T1083": "File and Directory Discovery", "T1190": "Exploit Public-Facing Application", "T1486": "Data Encrypted for Impact", "T1566": "Phishing"}
+    expected = {"T1110": "Brute Force", "T1078": "Valid Accounts", "T1046": "Network Service Discovery", "T1083": "File and Directory Discovery",
+                "T1190": "Exploit Public-Facing Application", "T1486": "Data Encrypted for Impact", "T1566": "Phishing"}
     with get_db() as db:
-        enabled = {row["mitre_attack"]: dict(row) for row in db.execute("SELECT * FROM detection_rules WHERE enabled = 1")}
+        enabled = {row["mitre_attack"]: dict(row) for row in db.execute(
+            "SELECT * FROM detection_rules WHERE enabled = 1")}
     return jsonify([{"technique": technique, "name": name, "covered": technique in enabled, "rule_id": enabled.get(technique, {}).get("rule_id")} for technique, name in expected.items()])
 
 
@@ -1317,27 +1470,33 @@ def saved_searches():
             return jsonify({"error": "A saved-search name is required."}), 400
         with get_db() as db:
             try:
-                db.execute("INSERT INTO saved_searches (username, name, query, severity, created_at) VALUES (?, ?, ?, ?, ?)", (session["username"], name[:80], payload.get("query", "")[:200], payload.get("severity", "").upper(), datetime.now(timezone.utc).isoformat()))
+                db.execute("INSERT INTO saved_searches (username, name, query, severity, created_at) VALUES (?, ?, ?, ?, ?)", (session["username"], name[:80], payload.get(
+                    "query", "")[:200], payload.get("severity", "").upper(), datetime.now(timezone.utc).isoformat()))
             except sqlite3.IntegrityError:
                 return jsonify({"error": "You already saved a search with that name."}), 409
         log_activity("Search saved", f"Saved search {name}")
     elif request.method == "DELETE":
         with get_db() as db:
-            db.execute("DELETE FROM saved_searches WHERE id = ? AND username = ?", (payload.get("id"), session["username"]))
+            db.execute("DELETE FROM saved_searches WHERE id = ? AND username = ?",
+                       (payload.get("id"), session["username"]))
     with get_db() as db:
-        rows = db.execute("SELECT * FROM saved_searches WHERE username = ? ORDER BY created_at DESC", (session["username"],)).fetchall()
+        rows = db.execute(
+            "SELECT * FROM saved_searches WHERE username = ? ORDER BY created_at DESC", (session["username"],)).fetchall()
     return jsonify([dict(row) for row in rows])
 
 
 @app.route("/api/playbooks", methods=["GET", "POST"])
 @login_required
 def playbooks():
-    items = [{"id": "brute-force", "title": "Brute-force login", "steps": ["Validate source and target", "Investigate related identities", "Contain affected lab account", "Document remediation"]}, {"id": "malware", "title": "Malware signal", "steps": ["Preserve evidence", "Isolate affected asset", "Scan and remediate", "Resolve with validation"]}, {"id": "recon", "title": "Port scan", "steps": ["Confirm exposed service", "Review source history", "Restrict unnecessary exposure", "Monitor recurrence"]}, {"id": "phishing", "title": "Phishing report", "steps": ["Preserve URL and headers", "Analyze indicators", "Block in lab controls", "Notify affected users"]}]
+    items = [{"id": "brute-force", "title": "Brute-force login", "steps": ["Validate source and target", "Investigate related identities", "Contain affected lab account", "Document remediation"]}, {"id": "malware", "title": "Malware signal", "steps": ["Preserve evidence", "Isolate affected asset", "Scan and remediate", "Resolve with validation"]},
+             {"id": "recon", "title": "Port scan", "steps": ["Confirm exposed service", "Review source history", "Restrict unnecessary exposure", "Monitor recurrence"]}, {"id": "phishing", "title": "Phishing report", "steps": ["Preserve URL and headers", "Analyze indicators", "Block in lab controls", "Notify affected users"]}]
     if request.method == "POST":
-        chosen = next((item for item in items if item["id"] == (request.get_json(silent=True) or {}).get("id")), None)
+        chosen = next((item for item in items if item["id"] == (
+            request.get_json(silent=True) or {}).get("id")), None)
         if not chosen:
             return jsonify({"error": "Playbook not found."}), 404
-        log_activity("Playbook launched", f"Started {chosen['title']} workflow")
+        log_activity("Playbook launched",
+                     f"Started {chosen['title']} workflow")
         return jsonify(chosen)
     return jsonify(items)
 
@@ -1470,20 +1629,61 @@ def export_events():
 def export_audit_report():
     with get_db() as db:
         event_total = db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
-        incident_total = db.execute("SELECT COUNT(*) FROM incidents").fetchone()[0]
-        resolved = db.execute("SELECT COUNT(*) FROM incidents WHERE status = 'RESOLVED'").fetchone()[0]
+        incident_total = db.execute(
+            "SELECT COUNT(*) FROM incidents").fetchone()[0]
+        resolved = db.execute(
+            "SELECT COUNT(*) FROM incidents WHERE status = 'RESOLVED'").fetchone()[0]
         alerts = db.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
-        overdue = db.execute("SELECT COUNT(*) FROM alerts JOIN events ON events.id = alerts.event_id WHERE alerts.status IN ('NEW', 'OPEN') AND events.severity IN ('CRITICAL', 'HIGH') AND alerts.created_at < ?", ((datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat(),)).fetchone()[0]
-        techniques = db.execute("SELECT mitre_attack, name, enabled FROM detection_rules ORDER BY rule_id").fetchall()
+        overdue = db.execute("SELECT COUNT(*) FROM alerts JOIN events ON events.id = alerts.event_id WHERE alerts.status IN ('NEW', 'OPEN') AND events.severity IN ('CRITICAL', 'HIGH') AND alerts.created_at < ?",
+                             ((datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat(),)).fetchone()[0]
+        techniques = db.execute(
+            "SELECT mitre_attack, name, enabled FROM detection_rules ORDER BY rule_id").fetchall()
     stream = io.StringIO()
     writer = csv.writer(stream)
-    writer.writerow(["M & M Lab audit report", datetime.now(timezone.utc).isoformat()])
-    writer.writerows([("events", event_total), ("alerts", alerts), ("incidents", incident_total), ("resolved_incidents", resolved), ("high_priority_overdue_alerts", overdue)])
+    writer.writerow(["M & M Lab audit report",
+                    datetime.now(timezone.utc).isoformat()])
+    writer.writerows([("events", event_total), ("alerts", alerts), ("incidents", incident_total),
+                     ("resolved_incidents", resolved), ("high_priority_overdue_alerts", overdue)])
     writer.writerow([])
     writer.writerow(["mitre_technique", "rule_name", "enabled"])
-    writer.writerows([(row["mitre_attack"], row["name"], bool(row["enabled"])) for row in techniques])
-    log_activity("Audit report exported", f"Exported audit summary with {event_total} events")
+    writer.writerows([(row["mitre_attack"], row["name"],
+                     bool(row["enabled"])) for row in techniques])
+    log_activity("Audit report exported",
+                 f"Exported audit summary with {event_total} events")
     return send_file(io.BytesIO(stream.getvalue().encode()), mimetype="text/csv", as_attachment=True, download_name="m-and-m-audit-report.csv")
+
+
+@app.route("/api/maintenance/backups", methods=["GET"])
+@login_required
+@role_required("Admin")
+def list_backups():
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    backups = sorted(BACKUP_DIR.glob("backup-*.db"), reverse=True)
+    return jsonify([{"name": path.name, "size": path.stat().st_size,
+                    "created_at": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()} for path in backups])
+
+
+@app.route("/api/maintenance/backup", methods=["POST"])
+@login_required
+@role_required("Admin")
+def trigger_backup():
+    path = create_backup()
+    log_activity("Backup created", f"Created database backup {path.name}")
+    return jsonify({"name": path.name, "size": path.stat().st_size}), 201
+
+
+@app.route("/api/maintenance/prune", methods=["POST"])
+@login_required
+@role_required("Admin")
+def trigger_prune():
+    payload = request.get_json(silent=True) or {}
+    retention_days = int(payload.get("retention_days") or get_retention_days())
+    if retention_days < 1:
+        return jsonify({"error": "Retention must be at least 1 day."}), 400
+    deleted = prune_old_events(retention_days)
+    log_activity("Retention pruning run",
+                 f"Removed {deleted} resolved events older than {retention_days} days")
+    return jsonify({"deleted_events": deleted, "retention_days": retention_days})
 
 
 initialize_database()

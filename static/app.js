@@ -217,12 +217,23 @@ async function loadSavedSearches() {
     if (!response.ok) return;
     const items = await response.json();
     const target = document.querySelector('#saved-searches');
-    target.innerHTML = items.map(item => `<button class="saved-search" data-query="${escapeHtml(item.query)}" data-severity="${escapeHtml(item.severity)}" type="button">${escapeHtml(item.name)}</button>`).join('');
+    target.innerHTML = items.map(item => `<button class="saved-search" data-name="${escapeHtml(item.name)}" data-query="${escapeHtml(item.query)}" data-severity="${escapeHtml(item.severity)}" type="button">${escapeHtml(item.name)}</button>`).join('');
     target.querySelectorAll('.saved-search').forEach(button => button.addEventListener('click', () => {
         document.querySelector('#event-search').value = button.dataset.query;
         document.querySelector('#severity-filter').value = button.dataset.severity;
         filterEvents();
+        showSavedSearchLiveView(button.dataset.name, button.dataset.query, button.dataset.severity);
     }));
+}
+
+async function showSavedSearchLiveView(name, query, severity) {
+    const params = new URLSearchParams({ q: query, severity });
+    const response = await fetch(`/api/events?${params}`);
+    if (!response.ok) return;
+    const items = await response.json();
+    document.querySelector('#saved-search-live-title').textContent = `${name} · ${items.length} match${items.length === 1 ? '' : 'es'}`;
+    document.querySelector('#saved-search-live-list').innerHTML = items.slice(0, 8).map(item => `<div class="saved-search-live-item"><span class="severity severity-${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span><strong>${escapeHtml(item.event_type)}</strong><span class="mono">${escapeHtml(item.source_ip)}</span><small>${formatTime(item.timestamp)}</small></div>`).join('') || '<p class="empty">No matching events.</p>';
+    document.querySelector('#saved-search-live').hidden = false;
 }
 
 async function loadMitreCoverage() {
@@ -333,13 +344,22 @@ document.querySelectorAll('.nav-link').forEach(link => link.addEventListener('cl
 
 document.querySelector('#event-search').addEventListener('input', filterEvents);
 document.querySelector('#severity-filter').addEventListener('change', filterEvents);
-document.querySelector('#save-search').addEventListener('click', async () => {
-    const name = window.prompt('Name this event view');
+document.querySelector('#save-search').addEventListener('click', () => {
+    document.querySelector('#save-search-form').hidden = false;
+    document.querySelector('#save-search-form [name="name"]').focus();
+});
+document.querySelector('#save-search-cancel').addEventListener('click', () => { document.querySelector('#save-search-form').hidden = true; });
+document.querySelector('#save-search-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const name = new FormData(event.target).get('name');
     if (!name) return;
     const { data } = await postJson('/api/saved-searches', { name, query: document.querySelector('#event-search').value, severity: document.querySelector('#severity-filter').value });
-    if (data.error) window.alert(data.error);
+    if (data.error) { window.alert(data.error); return; }
+    event.target.reset();
+    event.target.hidden = true;
     loadSavedSearches();
 });
+document.querySelector('#saved-search-live-close').addEventListener('click', () => { document.querySelector('#saved-search-live').hidden = true; });
 
 document.querySelector('#password-input').addEventListener('input', async event => {
     const response = await fetch('/api/password-check', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ password: event.target.value }) });
