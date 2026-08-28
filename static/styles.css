@@ -1376,6 +1376,12 @@ td:first-child {
     margin: 3px 0 10px;
 }
 
+.login-optional {
+    color: #6f9285;
+    font-weight: 400;
+    font-size: 10px;
+}
+
 .login-hint {
     color: #6f9285;
     font-size: 10px;
@@ -1547,6 +1553,36 @@ td:first-child {
     line-height: 1.6;
     margin-top: 12px;
     min-height: 32px;
+}
+
+.account-security {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 0 23px 17px;
+    border-top: 1px solid var(--line);
+    padding-top: 13px;
+}
+
+.totp-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.totp-panel #totp-verify-form {
+    display: flex;
+    gap: 6px;
+}
+
+.totp-panel #totp-verify-form input {
+    width: 90px;
+}
+
+.totp-panel code {
+    color: var(--teal);
+    font: 11px 'IBM Plex Mono', monospace;
 }
 
 .mini-result strong {

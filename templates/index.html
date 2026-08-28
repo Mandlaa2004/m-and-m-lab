@@ -198,7 +198,8 @@
                     <div>
                         <p class="eyebrow">MITRE ATT&CK COVERAGE</p>
                         <h2>Detection coverage</h2>
-                    </div><span class="event-count" id="coverage-count">--</span>
+                    </div><span class="event-count" id="coverage-count">--</span><a class="text-link"
+                        href="/api/mitre-coverage/navigator">Navigator layer</a>
                 </div>
                 <div class="coverage-matrix" id="coverage-matrix"></div>
             </article>
@@ -272,7 +273,8 @@
                         <option selected>MEDIUM</option>
                         <option>HIGH</option>
                         <option>CRITICAL</option>
-                    </select><button class="small-button" type="submit">Register</button></form>
+                    </select><input name="team" placeholder="Team (optional)"><button class="small-button"
+                        type="submit">Register</button></form>
             </article>
             <article class="panel operations-panel">
                 <div class="panel-heading">
@@ -323,7 +325,21 @@
                         <option>Viewer</option>
                         <option>Security Analyst</option>
                         <option>Admin</option>
-                    </select><button class="small-button" type="submit">Create</button></form>
+                    </select><input name="team" placeholder="Team (optional)"><button class="small-button"
+                        type="submit">Create</button></form>
+            </article>
+            <article class="panel operations-panel">
+                <div class="panel-heading">
+                    <div>
+                        <p class="eyebrow">TEAMS</p>
+                        <h2>Team registry</h2>
+                    </div><span class="event-count">Admin only</span>
+                </div>
+                <div id="teams-list" class="users-list">
+                    <p class="empty">No teams registered yet.</p>
+                </div>
+                <form class="compact-form" id="team-form"><input name="name" placeholder="Team name"
+                        required><button class="small-button" type="submit">Add team</button></form>
             </article>
         </section>
         <section class="control-grid">
@@ -335,6 +351,18 @@
                     </div><span class="event-count">Auto-refresh</span>
                 </div>
                 <div id="live-activity" class="activity-list"></div>
+            </article>
+            <article class="panel operations-panel">
+                <div class="panel-heading">
+                    <div>
+                        <p class="eyebrow">AUDIT TRAIL</p>
+                        <h2>Filtered activity</h2>
+                    </div><a class="text-link" id="audit-export-link" href="/export/activity.csv">Export CSV</a>
+                </div>
+                <div class="inline-form"><input id="audit-actor" placeholder="Actor"><input id="audit-action"
+                        placeholder="Action"><button class="small-button" id="audit-filter-button"
+                        type="button">Filter</button></div>
+                <div id="audit-list" class="activity-list"></div>
             </article>
             <article class="panel operations-panel">
                 <div class="panel-heading">
@@ -363,6 +391,22 @@
                         </select></label><label class="checkbox-label"><input name="browser_enabled" type="checkbox"
                             checked> Enable notifications</label><button class="small-button"
                         type="submit">Save</button></form>
+                <div class="account-security">
+                    <button class="row-action" id="sign-out-all" type="button">Sign out all devices</button>
+                    {% if role == 'Admin' %}
+                    <div class="totp-panel" id="totp-panel">
+                        <button class="row-action" id="totp-setup-button" type="button">Set up authenticator</button>
+                        <div id="totp-setup-result" class="mini-result" hidden>
+                            <p>Secret: <code id="totp-secret"></code></p>
+                            <form id="totp-verify-form"><input name="code" inputmode="numeric" maxlength="6"
+                                    placeholder="123456" required><button class="small-button" type="submit">Enable
+                                    2FA</button></form>
+                        </div>
+                        <button class="row-action" id="totp-disable-button" type="button" hidden>Disable
+                            2FA</button>
+                    </div>
+                    {% endif %}
+                </div>
             </article>
         </section>
         <section class="admin-grid">
@@ -377,6 +421,9 @@
                             type="number" min="5" value="10"></label><label>Retention days<input name="retention_days"
                             type="number" min="1" value="90"></label><button class="small-button" type="submit">Save
                         settings</button></form>
+                <div class="compact-form" id="threat-feed-sync"><input name="url"
+                        placeholder="https://example.org/ip-feed.txt (optional)"><button class="small-button"
+                        type="button" id="threat-feed-sync-button">Sync threat feed</button></div>
             </article>
             <article class="panel operations-panel">
                 <div class="panel-heading">

@@ -159,9 +159,10 @@ async function loadOperations() {
             loadNotificationPreferences(),
             loadSavedSearches(),
             loadMitreCoverage(),
-            loadPlaybooks()
+            loadPlaybooks(),
+            loadAuditTrail()
         ]);
-        if (isAdmin) await Promise.all([loadUsers(), loadPlatformSettings()]);
+        if (isAdmin) await Promise.all([loadUsers(), loadPlatformSettings(), loadTeams()]);
     } finally {
         operationsRequestInFlight = false;
     }
@@ -261,6 +262,29 @@ async function loadActivityFeed() {
     if (response.ok) renderActivity(await response.json(), 'live-activity');
 }
 
+function auditFilterParams() {
+    return new URLSearchParams({
+        actor: document.querySelector('#audit-actor')?.value || '',
+        action: document.querySelector('#audit-action')?.value || ''
+    });
+}
+
+async function loadAuditTrail() {
+    const params = auditFilterParams();
+    const response = await fetch(`/api/audit?${params}`);
+    if (response.ok) renderActivity(await response.json(), 'audit-list');
+    document.querySelector('#audit-export-link').href = `/export/activity.csv?${params}`;
+}
+
+async function loadAuditTrail() {
+    const actor = document.querySelector('#audit-actor')?.value.trim() || '';
+    const action = document.querySelector('#audit-action')?.value.trim() || '';
+    const params = new URLSearchParams({ actor, action });
+    const response = await fetch(`/api/audit?${params}`);
+    if (response.ok) renderActivity(await response.json(), 'audit-list');
+    document.querySelector('#audit-export-link').href = `/export/activity.csv?${params}`;
+}
+
 async function loadReports() {
     const response = await fetch('/api/reports/summary');
     if (!response.ok) return;
@@ -307,7 +331,14 @@ async function loadUsers() {
     const response = await fetch('/api/users');
     if (!response.ok) return;
     const items = await response.json();
-    document.querySelector('#users-list').innerHTML = items.map(item => `<div class="user-item"><strong>${escapeHtml(item.username)}</strong><span>${escapeHtml(item.role)}</span></div>`).join('');
+    document.querySelector('#users-list').innerHTML = items.map(item => `<div class="user-item"><strong>${escapeHtml(item.username)}</strong><span>${escapeHtml(item.role)}${item.team ? ` · ${escapeHtml(item.team)}` : ''}${item.totp_enabled ? ' · 2FA' : ''}</span></div>`).join('');
+}
+
+async function loadTeams() {
+    const response = await fetch('/api/teams');
+    if (!response.ok) return;
+    const items = await response.json();
+    document.querySelector('#teams-list').innerHTML = items.length ? items.map(item => `<div class="user-item"><strong>${escapeHtml(item.name)}</strong><span>${item.asset_count} asset${item.asset_count === 1 ? '' : 's'}</span></div>`).join('') : '<p class="empty">No teams registered yet.</p>';
 }
 
 function renderRules(items) {
@@ -360,6 +391,57 @@ document.querySelector('#save-search-form').addEventListener('submit', async eve
     loadSavedSearches();
 });
 document.querySelector('#saved-search-live-close').addEventListener('click', () => { document.querySelector('#saved-search-live').hidden = true; });
+
+document.querySelector('#audit-filter-button').addEventListener('click', loadAuditTrail);
+
+document.querySelector('#sign-out-all').addEventListener('click', async () => {
+    if (!window.confirm('Sign out of all devices? You will need to log in again.')) return;
+    await fetch('/api/account/sessions', { method: 'DELETE', headers: { 'X-CSRF-Token': csrfToken } });
+    window.location.href = '/login';
+});
+
+const totpSetupButton = document.querySelector('#totp-setup-button');
+if (totpSetupButton) {
+    totpSetupButton.addEventListener('click', async () => {
+        const { data } = await postJson('/api/account/totp/setup', {});
+        if (data.error) { window.alert(data.error); return; }
+        document.querySelector('#totp-secret').textContent = data.secret;
+        document.querySelector('#totp-setup-result').hidden = false;
+    });
+    document.querySelector('#totp-verify-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        const code = new FormData(event.target).get('code');
+        const { data } = await postJson('/api/account/totp/verify', { code });
+        if (data.error) { window.alert(data.error); return; }
+        document.querySelector('#totp-setup-result').hidden = true;
+        document.querySelector('#totp-disable-button').hidden = false;
+        window.alert('Two-factor authentication enabled.');
+    });
+    document.querySelector('#totp-disable-button').addEventListener('click', async () => {
+        await postJson('/api/account/totp/disable', {});
+        document.querySelector('#totp-disable-button').hidden = true;
+    });
+}
+
+document.querySelector('#threat-feed-sync-button')?.addEventListener('click', async () => {
+    const url = document.querySelector('#threat-feed-sync input[name="url"]').value.trim();
+    const { data } = await postJson('/api/threat-intel/sync', url ? { url } : {});
+    window.alert(data.error || `${data.added} new indicator${data.added === 1 ? '' : 's'} imported.`);
+    loadIndicators();
+});
+
+document.querySelector('#team-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const { data } = await postJson('/api/teams', Object.fromEntries(new FormData(event.target)));
+    if (data.error) window.alert(data.error);
+    event.target.reset();
+    loadTeams();
+});
+
+if (window.EventSource) {
+    const eventStream = new EventSource('/api/events/stream');
+    eventStream.onmessage = () => loadSummary();
+}
 
 document.querySelector('#password-input').addEventListener('input', async event => {
     const response = await fetch('/api/password-check', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ password: event.target.value }) });

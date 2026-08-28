@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import csv
 import hashlib
+import hmac
 import io
 import ipaddress
 import os
@@ -9,6 +11,7 @@ import re
 import smtplib
 import sqlite3
 import socket
+import threading
 import time
 import logging
 import json
@@ -20,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, Response, jsonify, redirect, render_template, request, send_file, session, stream_with_context, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -40,6 +43,8 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.environ.get(
     "SESSION_COOKIE_SECURE", "0") == "1"
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(
+    minutes=int(os.environ.get("SESSION_IDLE_MINUTES", "30")))
 if IS_PRODUCTION and app.config["SECRET_KEY"] == "local-lab-secret-change-me":
     raise RuntimeError("SECRET_KEY must be set in production")
 if IS_PRODUCTION and not all(os.environ.get(name) for name in ("ADMIN_PASSWORD", "ANALYST_PASSWORD", "VIEWER_PASSWORD")):
@@ -60,9 +65,39 @@ LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 MUTATION_REQUESTS: dict[str, list[float]] = {}
 MUTATION_RATE_LIMIT = 30
 MUTATION_RATE_WINDOW_SECONDS = 10
+MITRE_TECHNIQUES = {
+    "T1110": "Brute Force", "T1078": "Valid Accounts", "T1046": "Network Service Discovery",
+    "T1083": "File and Directory Discovery", "T1190": "Exploit Public-Facing Application",
+    "T1486": "Data Encrypted for Impact", "T1566": "Phishing",
+}
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("m-and-m-lab")
+
+
+def validate_external_config() -> None:
+    """Fail fast in production on clearly malformed integration settings; warn otherwise."""
+    problems = []
+    for name in ("SLACK_WEBHOOK_URL", "NOTIFY_WEBHOOK_URL", "THREAT_FEED_URL"):
+        value = os.environ.get(name)
+        if value and not value.startswith("https://"):
+            problems.append(f"{name} must start with https://")
+    smtp_port = os.environ.get("SMTP_PORT")
+    if smtp_port and not smtp_port.isdigit():
+        problems.append("SMTP_PORT must be numeric")
+    notify_to = os.environ.get("NOTIFY_EMAIL_TO")
+    if notify_to and "@" not in notify_to:
+        problems.append("NOTIFY_EMAIL_TO must be a valid email address")
+    if not problems:
+        return
+    message = "; ".join(problems)
+    if IS_PRODUCTION:
+        raise RuntimeError(
+            f"Invalid external integration configuration: {message}")
+    logger.warning("Configuration warning: %s", message)
+
+
+validate_external_config()
 
 
 def get_db() -> sqlite3.Connection:
@@ -120,6 +155,74 @@ def external_ip_intelligence(address: str) -> list[dict[str, object]]:
             providers.append(
                 {"provider": name, "available": False, "data": {}})
     return providers
+
+
+def generate_totp_secret() -> str:
+    return base64.b32encode(os.urandom(10)).decode("ascii").rstrip("=")
+
+
+def _totp_code_at(secret: str, counter: int, digits: int = 6) -> str:
+    padded = secret + "=" * ((8 - len(secret) % 8) % 8)
+    key = base64.b32decode(padded.upper())
+    digest = hmac.new(key, counter.to_bytes(8, "big"), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    code = (int.from_bytes(digest[offset:offset + 4], "big")
+            & 0x7FFFFFFF) % (10 ** digits)
+    return str(code).zfill(digits)
+
+
+def verify_totp(secret: str, code: str, step: int = 30, window: int = 1) -> bool:
+    """RFC 6238 TOTP check allowing one adjacent time-step for clock drift."""
+    if not secret or not code or not code.strip().isdigit():
+        return False
+    counter = int(time.time() // step)
+    return any(_totp_code_at(secret, counter + offset) == code.strip() for offset in range(-window, window + 1))
+
+
+def sync_threat_feed(url: str | None = None) -> int:
+    """Import IP indicators from a configured feed; returns count of newly added entries."""
+    feed_url = url or os.environ.get("THREAT_FEED_URL")
+    if not feed_url:
+        return 0
+    try:
+        with urlopen(Request(feed_url, headers={"User-Agent": "m-and-m-lab"}), timeout=5) as response:
+            text = response.read().decode(errors="replace")
+    except (URLError, TimeoutError, OSError):
+        logger.warning("Threat feed sync failed for %s", feed_url)
+        return 0
+    added = 0
+    now_text = datetime.now(timezone.utc).isoformat()
+    with get_db() as db:
+        for line in text.splitlines()[:5000]:
+            value = line.strip()
+            if not value or value.startswith("#"):
+                continue
+            try:
+                ipaddress.ip_address(value)
+            except ValueError:
+                continue
+            cursor = db.execute("INSERT OR IGNORE INTO indicators (indicator_type, value, description, severity, source, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                               ("IP", value, "Imported from external threat feed", "HIGH", "feed", 60, now_text))
+            added += cursor.rowcount > 0
+        db.execute("INSERT INTO platform_settings (name, value, updated_at) VALUES ('last_threat_feed_sync', ?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                   (now_text, now_text))
+    return added
+
+
+def start_background_scheduler() -> None:
+    """Optional periodic threat-feed sync; only runs when explicitly configured."""
+    interval = os.environ.get("THREAT_FEED_SYNC_INTERVAL_MINUTES")
+    if not interval:
+        return
+
+    def loop() -> None:
+        while True:
+            time.sleep(max(5, int(interval)) * 60)
+            try:
+                sync_threat_feed()
+            except Exception:
+                logger.exception("Scheduled threat feed sync failed")
+    threading.Thread(target=loop, daemon=True).start()
 
 
 def initialize_database() -> None:
@@ -279,6 +382,10 @@ def initialize_database() -> None:
                 UNIQUE(username, name),
                 FOREIGN KEY(username) REFERENCES users(username)
             );
+            CREATE TABLE IF NOT EXISTS teams (
+                name TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS events_timestamp_idx ON events(timestamp DESC);
             CREATE INDEX IF NOT EXISTS events_severity_idx ON events(severity);
             CREATE INDEX IF NOT EXISTS events_status_idx ON events(status);
@@ -317,6 +424,20 @@ def initialize_database() -> None:
             if name not in indicator_columns:
                 db.execute(
                     f"ALTER TABLE indicators ADD COLUMN {name} {definition}")
+        user_columns = {row["name"]
+                       for row in db.execute("PRAGMA table_info(users)")}
+        for name, definition in {
+            "session_epoch": "INTEGER NOT NULL DEFAULT 0",
+            "totp_secret": "TEXT",
+            "totp_enabled": "INTEGER NOT NULL DEFAULT 0",
+            "team": "TEXT NOT NULL DEFAULT ''",
+        }.items():
+            if name not in user_columns:
+                db.execute(f"ALTER TABLE users ADD COLUMN {name} {definition}")
+        asset_columns = {row["name"]
+                        for row in db.execute("PRAGMA table_info(assets)")}
+        if "team" not in asset_columns:
+            db.execute("ALTER TABLE assets ADD COLUMN team TEXT NOT NULL DEFAULT ''")
         credentials = (("admin", os.environ.get("ADMIN_PASSWORD", "admin123"), "Admin"), ("analyst", os.environ.get(
             "ANALYST_PASSWORD", "analyst123"), "Security Analyst"), ("viewer", os.environ.get("VIEWER_PASSWORD", "viewer123"), "Viewer"))
         for username, password, role in credentials:
@@ -579,6 +700,12 @@ def login_required(view):
     def wrapped(*args, **kwargs):
         if "username" not in session:
             return redirect(url_for("login"))
+        with get_db() as db:
+            row = db.execute(
+                "SELECT session_epoch FROM users WHERE username = ?", (session["username"],)).fetchone()
+        if row is None or row["session_epoch"] != session.get("epoch"):
+            session.clear()
+            return redirect(url_for("login"))
         return view(*args, **kwargs)
 
     return wrapped
@@ -616,33 +743,41 @@ def login():
             user = db.execute(
                 "SELECT * FROM users WHERE username = ?", (username,)).fetchone()
         if user and check_password_hash(user["password_hash"], password):
-            LOGIN_ATTEMPTS.pop(request.remote_addr or "unknown", None)
-            session["username"] = username
-            session["role"] = user["role"]
+            if user["totp_enabled"] and not verify_totp(user["totp_secret"], request.form.get("totp_code", "")):
+                error = "Enter the current 6-digit authenticator code."
+                logger.warning(
+                    "Failed TOTP challenge for username=%s", username)
+            else:
+                LOGIN_ATTEMPTS.pop(request.remote_addr or "unknown", None)
+                session.permanent = True
+                session["username"] = username
+                session["role"] = user["role"]
+                session["epoch"] = user["session_epoch"]
+                log_activity(
+                    "User login", "Authenticated to local security console")
+                create_notification(
+                    "User signed in",
+                    f"{username} signed in from {request.remote_addr or 'unknown'}.",
+                    "INFO",
+                    "authentication",
+                    "/#overview",
+                )
+                return redirect(url_for("dashboard"))
+        if not error:
+            error = "Invalid local analyst credentials."
+            attempts.append(now)
+            LOGIN_ATTEMPTS[request.remote_addr or "unknown"] = attempts
             log_activity(
-                "User login", "Authenticated to local security console")
+                "Failed login", f"Rejected credentials for {username or 'blank username'}")
             create_notification(
-                "User signed in",
-                f"{username} signed in from {request.remote_addr or 'unknown'}.",
-                "INFO",
+                "Failed login attempt",
+                f"Rejected sign-in for {username or 'blank username'} from {request.remote_addr or 'unknown'}.",
+                "HIGH",
                 "authentication",
-                "/#overview",
+                "/#alerts",
             )
-            return redirect(url_for("dashboard"))
-        error = "Invalid local analyst credentials."
-        attempts.append(now)
-        LOGIN_ATTEMPTS[request.remote_addr or "unknown"] = attempts
-        log_activity(
-            "Failed login", f"Rejected credentials for {username or 'blank username'}")
-        create_notification(
-            "Failed login attempt",
-            f"Rejected sign-in for {username or 'blank username'} from {request.remote_addr or 'unknown'}.",
-            "HIGH",
-            "authentication",
-            "/#alerts",
-        )
-        logger.warning("Failed login for username=%s from %s",
-                       username, request.remote_addr)
+            logger.warning("Failed login for username=%s from %s",
+                          username, request.remote_addr)
     return render_template("login.html", error=error)
 
 
@@ -652,6 +787,59 @@ def logout():
         log_activity("User logout", "Signed out of local security console")
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/api/account/sessions", methods=["DELETE"])
+@login_required
+def revoke_sessions():
+    with get_db() as db:
+        db.execute(
+            "UPDATE users SET session_epoch = session_epoch + 1 WHERE username = ?", (session["username"],))
+    log_activity("Sessions revoked", "Signed out of all active sessions")
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/account/totp/setup", methods=["POST"])
+@login_required
+@role_required("Admin")
+def totp_setup():
+    secret = generate_totp_secret()
+    with get_db() as db:
+        db.execute("UPDATE users SET totp_secret = ?, totp_enabled = 0 WHERE username = ?",
+                   (secret, session["username"]))
+    log_activity("TOTP setup started",
+                 "Generated a new authenticator secret")
+    uri = f"otpauth://totp/M%20%26%20M%20Lab:{session['username']}?secret={secret}&issuer=M%20%26%20M%20Lab"
+    return jsonify({"secret": secret, "otpauth_uri": uri})
+
+
+@app.route("/api/account/totp/verify", methods=["POST"])
+@login_required
+@role_required("Admin")
+def totp_verify():
+    payload = request.get_json(silent=True) or {}
+    with get_db() as db:
+        user = db.execute(
+            "SELECT totp_secret FROM users WHERE username = ?", (session["username"],)).fetchone()
+    if not user or not verify_totp(user["totp_secret"], payload.get("code", "")):
+        return jsonify({"error": "Invalid authenticator code."}), 400
+    with get_db() as db:
+        db.execute("UPDATE users SET totp_enabled = 1 WHERE username = ?",
+                   (session["username"],))
+    log_activity("TOTP enabled", "Two-factor authentication activated")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/account/totp/disable", methods=["POST"])
+@login_required
+@role_required("Admin")
+def totp_disable():
+    with get_db() as db:
+        db.execute("UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE username = ?",
+                   (session["username"],))
+    log_activity("TOTP disabled", "Two-factor authentication turned off")
+    return jsonify({"ok": True})
 
 
 @app.route("/")
@@ -1103,16 +1291,17 @@ def assets():
         now_text = datetime.now(timezone.utc).isoformat()
         try:
             with get_db() as db:
-                cursor = db.execute("INSERT INTO assets (name, ip_address, asset_type, owner, criticality, operating_system, status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                    (name, ip_address, payload.get("asset_type", "Host"), payload.get("owner", ""), payload.get("criticality", "MEDIUM"), payload.get("operating_system", ""), payload.get("status", "ACTIVE"), payload.get("notes", ""), now_text, now_text))
+                cursor = db.execute("INSERT INTO assets (name, ip_address, asset_type, owner, criticality, operating_system, status, notes, team, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                    (name, ip_address, payload.get("asset_type", "Host"), payload.get("owner", ""), payload.get("criticality", "MEDIUM"), payload.get("operating_system", ""), payload.get("status", "ACTIVE"), payload.get("notes", ""), payload.get("team", ""), now_text, now_text))
                 asset_id = cursor.lastrowid
         except sqlite3.IntegrityError:
             return jsonify({"error": "An asset with that IP address already exists."}), 409
         log_activity("Asset added", f"Registered asset {name} ({ip_address})")
         return jsonify({"id": asset_id}), 201
+    team_filter = request.args.get("team", "").strip()
     with get_db() as db:
-        rows = db.execute("SELECT assets.*, COUNT(events.id) AS event_count, SUM(CASE WHEN events.timestamp >= ? THEN 1 ELSE 0 END) AS recent_event_count FROM assets LEFT JOIN events ON events.source_ip = assets.ip_address GROUP BY assets.id ORDER BY assets.criticality DESC, assets.name",
-                          ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),)).fetchall()
+        rows = db.execute(f"SELECT assets.*, COUNT(events.id) AS event_count, SUM(CASE WHEN events.timestamp >= ? THEN 1 ELSE 0 END) AS recent_event_count FROM assets LEFT JOIN events ON events.source_ip = assets.ip_address {'WHERE assets.team = ?' if team_filter else ''} GROUP BY assets.id ORDER BY assets.criticality DESC, assets.name",
+                          ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(), *([team_filter] if team_filter else []))).fetchall()
     weights = {"LOW": 25, "MEDIUM": 50, "HIGH": 75, "CRITICAL": 95}
     result = []
     for row in rows:
@@ -1136,7 +1325,7 @@ def update_asset(asset_id: int):
             db.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
         else:
             allowed = ("name", "asset_type", "owner", "criticality",
-                       "operating_system", "status", "notes")
+                       "operating_system", "status", "notes", "team")
             changes = {key: payload[key] for key in allowed if key in payload}
             if not changes:
                 return jsonify({"error": "No asset fields supplied."}), 400
@@ -1403,10 +1592,126 @@ def poll_collector(collector_id: int):
 @app.route("/api/audit")
 @login_required
 def audit():
+    clauses, values = _audit_filters()
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with get_db() as db:
         rows = db.execute(
-            "SELECT * FROM activity_log ORDER BY timestamp DESC LIMIT 200").fetchall()
+            f"SELECT * FROM activity_log {where} ORDER BY timestamp DESC LIMIT 200", values).fetchall()
     return jsonify([dict(row) for row in rows])
+
+
+def _audit_filters() -> tuple[list[str], list[str]]:
+    clauses, values = [], []
+    actor = request.args.get("actor", "").strip()
+    action = request.args.get("action", "").strip()
+    start = request.args.get("start", "").strip()
+    end = request.args.get("end", "").strip()
+    if actor:
+        clauses.append("actor LIKE ?")
+        values.append(f"%{actor}%")
+    if action:
+        clauses.append("action LIKE ?")
+        values.append(f"%{action}%")
+    if start:
+        clauses.append("timestamp >= ?")
+        values.append(start)
+    if end:
+        clauses.append("timestamp <= ?")
+        values.append(end)
+    return clauses, values
+
+
+@app.route("/export/activity.csv")
+@login_required
+def export_activity_log():
+    clauses, values = _audit_filters()
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    with get_db() as db:
+        rows = db.execute(
+            f"SELECT timestamp, actor, action, detail FROM activity_log {where} ORDER BY timestamp DESC", values).fetchall()
+    stream = io.StringIO()
+    writer = csv.writer(stream)
+    writer.writerow(["timestamp", "actor", "action", "detail"])
+    writer.writerows([tuple(row) for row in rows])
+    log_activity("Activity log exported",
+                 f"Exported {len(rows)} filtered audit entries")
+    return send_file(io.BytesIO(stream.getvalue().encode()), mimetype="text/csv", as_attachment=True, download_name="activity-log.csv")
+
+
+@app.route("/api/events/stream")
+@login_required
+def events_stream():
+    """Server-sent events for new security events; bounded per connection so clients reconnect periodically."""
+    with get_db() as db:
+        row = db.execute("SELECT MAX(id) AS max_id FROM events").fetchone()
+    last_id = row["max_id"] or 0
+
+    def generate(last_id: int):
+        yield "retry: 5000\n\n"
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline:
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT * FROM events WHERE id > ? ORDER BY id ASC", (last_id,)).fetchall()
+            for row in rows:
+                last_id = max(last_id, row["id"])
+                yield f"data: {json.dumps(dict(row))}\n\n"
+            time.sleep(2)
+
+    return Response(stream_with_context(generate(last_id)), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/api/threat-intel/sync", methods=["POST"])
+@login_required
+@role_required("Admin")
+def sync_threat_feed_route():
+    payload = request.get_json(silent=True) or {}
+    added = sync_threat_feed(payload.get("url"))
+    log_activity("Threat feed synced", f"Imported {added} new indicators")
+    return jsonify({"added": added})
+
+
+@app.route("/api/teams", methods=["GET", "POST"])
+@login_required
+@role_required("Admin")
+def teams():
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        name = payload.get("name", "").strip()
+        if not name:
+            return jsonify({"error": "Team name is required."}), 400
+        with get_db() as db:
+            try:
+                db.execute("INSERT INTO teams (name, created_at) VALUES (?, ?)",
+                          (name, datetime.now(timezone.utc).isoformat()))
+            except sqlite3.IntegrityError:
+                return jsonify({"error": "A team with that name already exists."}), 409
+        log_activity("Team created", f"Registered team {name}")
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT teams.name, COUNT(assets.id) AS asset_count FROM teams LEFT JOIN assets ON assets.team = teams.name GROUP BY teams.name ORDER BY teams.name").fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.route("/api/mitre-coverage/navigator")
+@login_required
+def mitre_coverage_navigator():
+    with get_db() as db:
+        enabled = {row["mitre_attack"] for row in db.execute(
+            "SELECT * FROM detection_rules WHERE enabled = 1")}
+    layer = {
+        "name": "M & M Lab Detection Coverage",
+        "versions": {"attack": "14", "navigator": "4.9.1", "layer": "4.5"},
+        "domain": "enterprise-attack",
+        "description": "Auto-generated from enabled detection rules.",
+        "techniques": [{"techniqueID": technique, "color": "#46f0d5" if technique in enabled else "#e56855", "comment": name, "enabled": True, "score": 100 if technique in enabled else 0} for technique, name in MITRE_TECHNIQUES.items()],
+        "gradient": {"colors": ["#e56855", "#46f0d5"], "minValue": 0, "maxValue": 100},
+        "legendItems": [{"label": "Covered", "color": "#46f0d5"}, {"label": "Gap", "color": "#e56855"}],
+    }
+    response = jsonify(layer)
+    response.headers["Content-Disposition"] = "attachment; filename=m-and-m-navigator-layer.json"
+    return response
 
 
 @app.route("/api/incidents/<int:incident_id>/timeline", methods=["GET", "POST"])
@@ -1452,12 +1757,10 @@ def incident_evidence(incident_id: int):
 @app.route("/api/mitre-coverage")
 @login_required
 def mitre_coverage():
-    expected = {"T1110": "Brute Force", "T1078": "Valid Accounts", "T1046": "Network Service Discovery", "T1083": "File and Directory Discovery",
-                "T1190": "Exploit Public-Facing Application", "T1486": "Data Encrypted for Impact", "T1566": "Phishing"}
     with get_db() as db:
         enabled = {row["mitre_attack"]: dict(row) for row in db.execute(
             "SELECT * FROM detection_rules WHERE enabled = 1")}
-    return jsonify([{"technique": technique, "name": name, "covered": technique in enabled, "rule_id": enabled.get(technique, {}).get("rule_id")} for technique, name in expected.items()])
+    return jsonify([{"technique": technique, "name": name, "covered": technique in enabled, "rule_id": enabled.get(technique, {}).get("rule_id")} for technique, name in MITRE_TECHNIQUES.items()])
 
 
 @app.route("/api/saved-searches", methods=["GET", "POST", "DELETE"])
@@ -1541,7 +1844,7 @@ def incidents():
 def users():
     with get_db() as db:
         rows = db.execute(
-            "SELECT username, role FROM users ORDER BY username").fetchall()
+            "SELECT username, role, team, totp_enabled FROM users ORDER BY username").fetchall()
     return jsonify([dict(row) for row in rows])
 
 
@@ -1556,8 +1859,8 @@ def create_user():
         if not username or role not in {"Admin", "Security Analyst", "Viewer"}:
             return jsonify({"error": "Username and a valid role are required."}), 400
         with get_db() as db:
-            db.execute("UPDATE users SET role = ?, password_hash = COALESCE(?, password_hash) WHERE username = ?",
-                       (role, generate_password_hash(payload["password"]) if payload.get("password") else None, username))
+            db.execute("UPDATE users SET role = ?, team = COALESCE(?, team), password_hash = COALESCE(?, password_hash) WHERE username = ?",
+                       (role, payload.get("team"), generate_password_hash(payload["password"]) if payload.get("password") else None, username))
         log_activity("User updated", f"Admin updated account {username}")
         return jsonify({"ok": True})
     if request.method == "DELETE":
@@ -1573,8 +1876,8 @@ def create_user():
     if not username or len(password) < 8 or role not in {"Admin", "Security Analyst", "Viewer"}:
         return jsonify({"error": "Username, an 8-character password, and a valid role are required."}), 400
     with get_db() as db:
-        db.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-                   (username, generate_password_hash(password), role))
+        db.execute("INSERT INTO users (username, password_hash, role, team) VALUES (?, ?, ?, ?)",
+                   (username, generate_password_hash(password), role, payload.get("team", "")))
     log_activity("User created", f"Admin created {role} account {username}")
     return jsonify({"ok": True}), 201
 
@@ -1687,6 +1990,7 @@ def trigger_prune():
 
 
 initialize_database()
+start_background_scheduler()
 
 if __name__ == "__main__":
     app.run(debug=not IS_PRODUCTION, host=os.environ.get(

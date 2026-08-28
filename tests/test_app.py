@@ -252,3 +252,105 @@ def test_critical_event_dispatches_external_webhook(isolated_app, monkeypatch):
             app_module.record_event(
                 'Malware signature', '10.0.0.70', 'CRITICAL', 'Webhook test evidence')
     assert calls
+
+
+def test_revoking_sessions_signs_out_current_session(isolated_app):
+    client, token = logged_in_client(isolated_app)
+    assert client.get('/api/summary').status_code == 200
+    revoke = client.delete('/api/account/sessions',
+                           headers={'X-CSRF-Token': token})
+    assert revoke.status_code == 200
+    assert client.get('/api/summary').status_code == 302
+
+
+def test_totp_setup_verify_and_login_challenge(isolated_app):
+    client = isolated_app.test_client()
+    client.get('/login')
+    with client.session_transaction() as session:
+        token = session['csrf_token']
+    client.post('/login', data={'username': 'admin',
+                'password': 'admin123', 'csrf_token': token})
+    with client.session_transaction() as session:
+        token = session['csrf_token']
+    setup = client.post('/api/account/totp/setup',
+                        headers={'X-CSRF-Token': token})
+    assert setup.status_code == 200
+    secret = setup.json['secret']
+    valid_code = app_module._totp_code_at(
+        secret, int(datetime.now(timezone.utc).timestamp() // 30))
+    verify = client.post('/api/account/totp/verify', json={
+                         'code': valid_code}, headers={'X-CSRF-Token': token})
+    assert verify.status_code == 200
+    client.get('/logout')
+    client.get('/login')
+    with client.session_transaction() as session:
+        token = session['csrf_token']
+    missing_code = client.post('/login', data={'username': 'admin',
+                               'password': 'admin123', 'csrf_token': token})
+    assert missing_code.status_code == 200
+    assert b'authenticator' in missing_code.data.lower()
+    with client.session_transaction() as session:
+        token = session['csrf_token']
+    valid_code = app_module._totp_code_at(
+        secret, int(datetime.now(timezone.utc).timestamp() // 30))
+    success = client.post('/login', data={'username': 'admin', 'password': 'admin123',
+                          'totp_code': valid_code, 'csrf_token': token})
+    assert success.status_code == 302
+
+
+def test_audit_filters_and_export(isolated_app):
+    client, token = logged_in_client(isolated_app)
+    with client.application.app_context():
+        app_module.record_event(
+            'Log detection', '10.0.0.80', 'HIGH', 'Audit filter evidence')
+    filtered = client.get('/api/audit?action=Log%20detection')
+    assert filtered.status_code == 200
+    export = client.get('/export/activity.csv')
+    assert export.status_code == 200
+    assert export.mimetype == 'text/csv'
+
+
+def test_teams_can_be_created_and_scope_assets(isolated_app):
+    client, token = logged_in_client(isolated_app)
+    with client.session_transaction() as session:
+        session['role'] = 'Admin'
+    create = client.post(
+        '/api/teams', json={'name': 'Blue Team'}, headers={'X-CSRF-Token': token})
+    assert create.status_code == 200
+    assert any(team['name'] == 'Blue Team' for team in create.json)
+    asset = client.post('/api/assets', json={
+                        'name': 'Team asset', 'ip_address': '10.0.0.90', 'team': 'Blue Team'}, headers={'X-CSRF-Token': token})
+    assert asset.status_code == 201
+    scoped = client.get('/api/assets?team=Blue%20Team')
+    assert scoped.json[0]['team'] == 'Blue Team'
+
+
+def test_threat_feed_sync_imports_indicators(isolated_app, monkeypatch):
+    client, token = logged_in_client(isolated_app)
+    with client.session_transaction() as session:
+        session['role'] = 'Admin'
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b"1.2.3.4\n# comment\nnot-an-ip\n5.6.7.8\n"
+
+    monkeypatch.setattr(app_module, 'urlopen', lambda request,
+                        timeout=5: FakeResponse())
+    response = client.post('/api/threat-intel/sync', json={
+                           'url': 'https://example.invalid/feed.txt'}, headers={'X-CSRF-Token': token})
+    assert response.status_code == 200
+    assert response.json['added'] == 2
+
+
+def test_mitre_navigator_export_returns_layer(isolated_app):
+    client, _ = logged_in_client(isolated_app)
+    response = client.get('/api/mitre-coverage/navigator')
+    assert response.status_code == 200
+    assert response.json['domain'] == 'enterprise-attack'
+    assert len(response.json['techniques']) == len(app_module.MITRE_TECHNIQUES)

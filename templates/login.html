@@ -32,6 +32,8 @@
             <label>Analyst ID<input name="username" value="analyst" autocomplete="username" required></label>
             <label>Passphrase<input name="password" type="password" placeholder="Enter passphrase"
                     autocomplete="current-password" required></label>
+            <label>Authenticator code <span class="login-optional">(if enabled)</span><input name="totp_code"
+                    inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="one-time-code"></label>
             {% if error %}<p class="form-error">{{ error }}</p>{% endif %}
             <button class="primary-button" type="submit">Open console <span>-></span></button>
         </form>
