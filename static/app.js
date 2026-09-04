@@ -210,7 +210,11 @@ async function loadAssets() {
     const response = await fetch('/api/assets');
     if (!response.ok) return;
     const items = await response.json();
-    document.querySelector('#assets-table').innerHTML = items.length ? items.map(item => `<tr><td><strong>${escapeHtml(item.name)}</strong><span class="event-message">${escapeHtml(item.asset_type)} · ${item.event_count} linked events · ${escapeHtml(item.risk_trend)}</span></td><td class="mono">${escapeHtml(item.ip_address)}</td><td><span class="severity severity-${escapeHtml(item.risk_level)}">${item.risk_score}/100</span></td><td>${escapeHtml(item.status)}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">No assets registered.</td></tr>';
+    document.querySelector('#assets-table').innerHTML = items.length ? items.map(item => `<tr><td><strong>${escapeHtml(item.name)}</strong><span class="event-message">${escapeHtml(item.asset_type)} · ${item.event_count} linked events · ${escapeHtml(item.risk_trend)}</span></td><td class="mono">${escapeHtml(item.ip_address)}</td><td><span class="severity severity-${escapeHtml(item.risk_level)}">${item.risk_score}/100</span></td><td>${escapeHtml(item.status)}</td><td><input class="asset-team-input" data-asset-id="${item.id}" value="${escapeHtml(item.team || '')}" placeholder="Unassigned" aria-label="Assign team"></td></tr>`).join('') : '<tr><td colspan="5" class="empty">No assets registered.</td></tr>';
+    document.querySelectorAll('.asset-team-input').forEach(input => input.addEventListener('change', async () => {
+        await fetch(`/api/assets/${input.dataset.assetId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ team: input.value.trim() }) });
+        loadTeams();
+    }));
 }
 
 async function loadSavedSearches() {

@@ -2286,6 +2286,16 @@ table td {
     font: 9px 'IBM Plex Mono', monospace;
 }
 
+.asset-team-input {
+    width: 100px;
+    padding: 6px;
+    color: #e4f1f4;
+    border: 1px solid #274655;
+    border-radius: 4px;
+    background: #091b28;
+    font: 9px 'IBM Plex Mono', monospace;
+}
+
 .triage-item.overdue {
     box-shadow: inset 2px 0 #ff8069;
 }
