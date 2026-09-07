@@ -10,6 +10,8 @@ let operationsRequestInFlight = false;
 let selectedIncidentId = null;
 let latestAlerts = [];
 let latestIncidents = [];
+let latestEvents = [];
+const selectedEventIds = new Set();
 
 function updateLocalTime() {
     const now = new Date();
@@ -58,7 +60,12 @@ async function loadNotifications() {
         count.textContent = data.unread;
         count.hidden = !data.unread;
         document.querySelector('#notification-list').innerHTML = data.items.length ? data.items.map(item => `<a class="notification-item ${item.read_at ? 'read' : ''}" href="${escapeHtml(item.link)}" data-notification-id="${item.id}"><span class="severity severity-${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.message)} · ${formatTime(item.created_at)}</small></span></a>`).join('') : '<p class="empty">You are all caught up.</p>';
-        document.querySelectorAll('.notification-item').forEach(item => item.addEventListener('click', async () => { await fetch(`/api/notifications/${item.dataset.notificationId}/read`, { method: 'POST', headers: { 'X-CSRF-Token': csrfToken } }); }));
+        document.querySelectorAll('.notification-item').forEach(item => item.addEventListener('click', async event => {
+            event.preventDefault();
+            await fetch(`/api/notifications/${item.dataset.notificationId}/read`, { method: 'POST', headers: { 'X-CSRF-Token': csrfToken } });
+            navigateToLink(item.getAttribute('href'));
+            document.querySelector('#notification-panel').hidden = true;
+        }));
     } finally {
         notificationsRequestInFlight = false;
     }
@@ -127,11 +134,28 @@ function renderResponseWorkflow(stages) {
 }
 
 function renderEvents(events) {
+    latestEvents = events;
+    selectedEventIds.clear();
+    updateEventsBulkToolbar();
     const target = document.querySelector('#events-table');
     document.querySelector('#event-count').textContent = `${events.length} event${events.length === 1 ? '' : 's'}`;
-    if (!events.length) { target.innerHTML = '<tr><td colspan="5" class="empty">No matching events found.</td></tr>'; return; }
-    target.innerHTML = events.map(event => `<tr class="event-row" data-event-id="${event.id}"><td>${escapeHtml(event.event_type)}<span class="event-message">${escapeHtml(event.message)}</span></td><td class="mono">${escapeHtml(event.source_ip)}</td><td><span class="severity severity-${escapeHtml(event.severity)}">${escapeHtml(event.severity)}</span></td><td class="mono">${formatTime(event.timestamp)}</td><td><span class="status ${escapeHtml(event.status)}">${escapeHtml(event.status)}</span></td></tr>`).join('');
-    target.querySelectorAll('.event-row').forEach(row => row.addEventListener('click', () => openEvent(events.find(event => String(event.id) === row.dataset.eventId))));
+    if (!events.length) { target.innerHTML = '<tr><td colspan="6" class="empty">No matching events found.</td></tr>'; return; }
+    target.innerHTML = events.map(event => `<tr class="event-row" data-event-id="${event.id}"><td><input type="checkbox" class="event-select" data-event-id="${event.id}" aria-label="Select event"></td><td>${escapeHtml(event.event_type)}<span class="event-message">${escapeHtml(event.message)}</span></td><td class="mono">${escapeHtml(event.source_ip)}</td><td><span class="severity severity-${escapeHtml(event.severity)}">${escapeHtml(event.severity)}</span></td><td class="mono">${formatTime(event.timestamp)}</td><td><span class="status ${escapeHtml(event.status)}">${escapeHtml(event.status)}</span></td></tr>`).join('');
+    target.querySelectorAll('.event-row').forEach(row => row.addEventListener('click', event => { if (event.target.classList.contains('event-select')) return; openEvent(events.find(item => String(item.id) === row.dataset.eventId)); }));
+    target.querySelectorAll('.event-select').forEach(checkbox => checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selectedEventIds.add(checkbox.dataset.eventId); else selectedEventIds.delete(checkbox.dataset.eventId);
+        updateEventsBulkToolbar();
+    }));
+    const selectAll = document.querySelector('#events-select-all');
+    if (selectAll) selectAll.checked = false;
+}
+
+function updateEventsBulkToolbar() {
+    const toolbar = document.querySelector('#events-bulk-toolbar');
+    if (!toolbar) return;
+    toolbar.hidden = selectedEventIds.size === 0;
+    const countLabel = document.querySelector('#events-bulk-count');
+    if (countLabel) countLabel.textContent = `${selectedEventIds.size} selected`;
 }
 
 function renderActivity(items, targetId = 'activity-list') {
@@ -139,7 +163,10 @@ function renderActivity(items, targetId = 'activity-list') {
 }
 
 async function filterEvents() {
-    const params = new URLSearchParams({ q: document.querySelector('#event-search').value, severity: document.querySelector('#severity-filter').value });
+    const q = document.querySelector('#event-search').value;
+    const severity = document.querySelector('#severity-filter').value;
+    try { window.localStorage.setItem('mm-event-filter', JSON.stringify({ q, severity })); } catch (error) { /* storage unavailable */ }
+    const params = new URLSearchParams({ q, severity });
     const response = await fetch(`/api/events?${params}`);
     renderEvents(await response.json());
 }
@@ -167,15 +194,43 @@ async function loadOperations() {
             loadAnalystActivity()
         ]);
         if (isAdmin) await Promise.all([loadUsers(), loadPlatformSettings(), loadTeams()]);
+        updateOnboarding();
     } finally {
         operationsRequestInFlight = false;
     }
 }
 
+function updateOnboarding() {
+    const card = document.querySelector('#onboarding-card');
+    if (!card) return;
+    let dismissed = false;
+    try { dismissed = window.localStorage.getItem('mm-onboarding-dismissed') === '1'; } catch (error) { /* storage unavailable */ }
+    if (dismissed) { card.hidden = true; return; }
+    const hasAssets = document.querySelectorAll('#assets-table tr:not(.empty-row)').length > 0 && !document.querySelector('#assets-table .empty');
+    const hasCollectors = !document.querySelector('#collectors-list .empty');
+    const has2fa = !document.querySelector('#totp-disable-button')?.hidden;
+    const hasTeammate = isAdmin ? document.querySelectorAll('#users-list .user-item').length > 1 : true;
+    const steps = [
+        { label: 'Register your first protected asset', done: hasAssets },
+        { label: 'Connect a log collector', done: hasCollectors },
+        { label: 'Enable two-factor authentication', done: has2fa },
+        { label: 'Invite a teammate', done: hasTeammate },
+    ];
+    const remaining = steps.filter(step => !step.done);
+    if (!remaining.length) { card.hidden = true; return; }
+    card.hidden = false;
+    document.querySelector('#onboarding-list').innerHTML = steps.map(step => `<div class="onboarding-item ${step.done ? 'done' : ''}"><i>${step.done ? '\u2713' : '\u25cb'}</i><span>${escapeHtml(step.label)}</span></div>`).join('');
+}
+
+document.querySelector('#onboarding-dismiss')?.addEventListener('click', () => {
+    try { window.localStorage.setItem('mm-onboarding-dismissed', '1'); } catch (error) { /* storage unavailable */ }
+    document.querySelector('#onboarding-card').hidden = true;
+});
+
 function renderIncidents(items) {
     latestIncidents = items;
     const target = document.querySelector('#incidents-table');
-    target.innerHTML = items.length ? items.map(item => `<tr><td><strong>#${item.id}</strong><span class="event-message">${escapeHtml(item.title)}</span></td><td><select class="incident-stage" data-incident-id="${item.id}">${['DETECT', 'INVESTIGATE', 'CONTAIN', 'REMEDIATE', 'RESOLVE'].map(stage => `<option ${item.response_stage === stage ? 'selected' : ''}>${stage}</option>`).join('')}</select></td><td class="mono">${formatTime(item.updated_at)}</td><td><button class="row-action" data-incident-id="${item.id}" type="button">Advance</button><button class="row-action timeline-action" data-incident-id="${item.id}" type="button">Timeline</button></td></tr>`).join('') : '<tr><td colspan="4" class="empty">No investigations yet.</td></tr>';
+    target.innerHTML = items.length ? items.map(item => `<tr class="${item.overdue ? 'overdue' : ''}"><td><strong>#${item.id}</strong>${item.overdue ? '<span class="sla-badge">SLA overdue</span>' : ''}<span class="event-message">${escapeHtml(item.title)}</span></td><td><select class="incident-stage" data-incident-id="${item.id}">${['DETECT', 'INVESTIGATE', 'CONTAIN', 'REMEDIATE', 'RESOLVE'].map(stage => `<option ${item.response_stage === stage ? 'selected' : ''}>${stage}</option>`).join('')}</select></td><td class="mono">${formatTime(item.updated_at)}</td><td><button class="row-action" data-incident-id="${item.id}" type="button">Advance</button><button class="row-action timeline-action" data-incident-id="${item.id}" type="button">Timeline</button></td></tr>`).join('') : '<tr><td colspan="4" class="empty">No investigations yet.</td></tr>';
     target.querySelectorAll('.row-action:not(.timeline-action)').forEach(button => button.addEventListener('click', () => updateIncident(button.dataset.incidentId)));
     target.querySelectorAll('.timeline-action').forEach(button => button.addEventListener('click', () => loadTimeline(button.dataset.incidentId)));
 }
@@ -208,10 +263,29 @@ async function loadEvidence(id) {
 
 const ALERT_STAGE_LABELS = { NEW: 'New', OPEN: 'New', ACKNOWLEDGED: 'Investigating', 'IN PROGRESS': 'Contained', RESOLVED: 'Resolved', 'FALSE POSITIVE': 'Resolved' };
 
+function groupAlertCampaigns(items) {
+    const sorted = [...items].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const groups = [];
+    sorted.forEach(item => {
+        const last = groups[groups.length - 1];
+        if (last && last.source_ip === item.source_ip && Math.abs(new Date(last.items[last.items.length - 1].created_at) - new Date(item.created_at)) <= 30 * 60 * 1000) {
+            last.items.push(item);
+        } else {
+            groups.push({ source_ip: item.source_ip, items: [item] });
+        }
+    });
+    return groups;
+}
+
 function renderAlerts(items) {
     latestAlerts = items;
     document.querySelector('#alert-count').textContent = `${items.length} alert${items.length === 1 ? '' : 's'}`;
-    document.querySelector('#alerts-list').innerHTML = items.length ? items.slice(0, 8).map(item => `<div class="alert-item"><button class="alert-open" data-event-id="${item.event_id}" type="button"><span class="severity severity-${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span><span><strong>${escapeHtml(item.name || 'Detection alert')}</strong><small>${escapeHtml(item.source_ip)} · ${escapeHtml(item.rule_id || 'manual')} · ${escapeHtml(item.mitre_attack || 'unmapped')}</small></span></button><span class="alert-stage">${escapeHtml(ALERT_STAGE_LABELS[item.status] || item.status)}</span><button class="row-action alert-investigate" data-alert-id="${item.id}" data-event-id="${item.event_id}" type="button">Investigate</button></div>`).join('') : '<p class="empty">No alerts recorded yet.</p>';
+    const campaigns = groupAlertCampaigns(items).slice(0, 8);
+    document.querySelector('#alerts-list').innerHTML = campaigns.length ? campaigns.map(group => {
+        const item = group.items[0];
+        const campaignBadge = group.items.length > 1 ? `<span class="campaign-badge">${group.items.length} correlated</span>` : '';
+        return `<div class="alert-item"><button class="alert-open" data-event-id="${item.event_id}" type="button"><span class="severity severity-${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span><span><strong>${escapeHtml(item.name || 'Detection alert')}</strong>${campaignBadge}<small>${escapeHtml(item.source_ip)} · ${escapeHtml(item.rule_id || 'manual')} · ${escapeHtml(item.mitre_attack || 'unmapped')}</small></span></button><span class="alert-stage">${escapeHtml(ALERT_STAGE_LABELS[item.status] || item.status)}</span><button class="row-action alert-investigate" data-alert-id="${item.id}" data-event-id="${item.event_id}" type="button">Investigate</button></div>`;
+    }).join('') : '<p class="empty">No alerts recorded yet.</p>';
     document.querySelectorAll('.alert-open').forEach(item => item.addEventListener('click', () => inspectEvent(item.dataset.eventId)));
     document.querySelectorAll('.alert-investigate').forEach(button => button.addEventListener('click', async () => {
         await fetch(`/api/alerts/${button.dataset.alertId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ status: 'ACKNOWLEDGED' }) });
@@ -448,6 +522,16 @@ try {
     if (savedPage && pageTitles[savedPage]) switchPage(savedPage);
 } catch (error) { /* storage unavailable */ }
 
+const HASH_PAGE_MAP = { events: 'events', alerts: 'tools', response: 'events', assets: 'assets', activity: 'activity', tools: 'tools' };
+
+function navigateToLink(link) {
+    const hash = (link || '').split('#')[1] || '';
+    const page = HASH_PAGE_MAP[hash];
+    if (page) switchPage(page);
+}
+
+if (window.location.hash) navigateToLink(window.location.hash);
+
 const themeToggleButton = document.querySelector('#theme-toggle');
 function applyTheme(theme) {
     document.body.dataset.theme = theme;
@@ -570,6 +654,39 @@ document.querySelectorAll('.quick-action-button').forEach(button => button.addEv
 
 document.querySelector('#event-search').addEventListener('input', filterEvents);
 document.querySelector('#severity-filter').addEventListener('change', filterEvents);
+try {
+    const pinnedFilter = JSON.parse(window.localStorage.getItem('mm-event-filter') || 'null');
+    if (pinnedFilter) {
+        document.querySelector('#event-search').value = pinnedFilter.q || '';
+        document.querySelector('#severity-filter').value = pinnedFilter.severity || '';
+        if (pinnedFilter.q || pinnedFilter.severity) filterEvents();
+    }
+} catch (error) { /* storage unavailable */ }
+
+document.querySelector('#events-select-all')?.addEventListener('change', event => {
+    document.querySelectorAll('.event-select').forEach(checkbox => {
+        checkbox.checked = event.target.checked;
+        if (checkbox.checked) selectedEventIds.add(checkbox.dataset.eventId); else selectedEventIds.delete(checkbox.dataset.eventId);
+    });
+    updateEventsBulkToolbar();
+});
+document.querySelector('#events-bulk-resolve')?.addEventListener('click', async () => {
+    await Promise.all(Array.from(selectedEventIds).map(id => fetch(`/api/events/${id}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ status: 'Resolved' }) })));
+    filterEvents();
+    loadSummary();
+});
+document.querySelector('#events-bulk-export')?.addEventListener('click', () => {
+    const rows = latestEvents.filter(event => selectedEventIds.has(String(event.id)));
+    if (!rows.length) return;
+    const header = ['id', 'timestamp', 'event_type', 'source_ip', 'user', 'severity', 'status'];
+    const csv = [header.join(',')].concat(rows.map(row => header.map(key => `"${String(row[key] ?? '').replace(/"/g, '""')}"`).join(','))).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'selected-events.csv';
+    link.click();
+    URL.revokeObjectURL(link.href);
+});
 document.querySelector('#save-search').addEventListener('click', () => {
     document.querySelector('#save-search-form').hidden = false;
     document.querySelector('#save-search-form [name="name"]').focus();
@@ -634,10 +751,41 @@ document.querySelector('#team-form')?.addEventListener('submit', async event => 
     loadTeams();
 });
 
+let sseRefreshDebounce = null;
 if (window.EventSource) {
     const eventStream = new EventSource('/api/events/stream');
-    eventStream.onmessage = () => loadSummary();
+    eventStream.onmessage = () => {
+        window.clearTimeout(sseRefreshDebounce);
+        sseRefreshDebounce = window.setTimeout(() => loadSummary({ refreshOperations: true }), 400);
+    };
 }
+
+function showToast(message) {
+    let toast = document.querySelector('#mm-toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'mm-toast';
+        toast.className = 'mm-toast';
+        document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.classList.add('visible');
+    window.clearTimeout(toast._timer);
+    toast._timer = window.setTimeout(() => toast.classList.remove('visible'), 4000);
+}
+
+document.addEventListener('keydown', event => {
+    const isTypingTarget = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+    if ((event.key === 'k' && (event.metaKey || event.ctrlKey)) || (event.key === '/' && !isTypingTarget)) {
+        event.preventDefault();
+        document.querySelector('#global-search-input')?.focus();
+    }
+});
+
+document.querySelector('#email-report-button')?.addEventListener('click', async () => {
+    const { data } = await postJson('/api/reports/email', {});
+    showToast(data.message || data.error);
+});
 
 document.querySelector('#password-input').addEventListener('input', async event => {
     const response = await fetch('/api/password-check', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ password: event.target.value }) });
@@ -662,6 +810,7 @@ document.querySelector('#ip-button').addEventListener('click', () => inspectIp(d
 
 async function postJson(url, payload) {
     const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify(payload) });
+    if (response.status === 429) showToast('Too many requests. Slow down and try again shortly.');
     return { response, data: await response.json() };
 }
 

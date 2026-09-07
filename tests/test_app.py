@@ -354,3 +354,102 @@ def test_mitre_navigator_export_returns_layer(isolated_app):
     assert response.status_code == 200
     assert response.json['domain'] == 'enterprise-attack'
     assert len(response.json['techniques']) == len(app_module.MITRE_TECHNIQUES)
+
+
+def test_global_search_finds_events_and_indicators(isolated_app):
+    client, token = logged_in_client(isolated_app)
+    response = client.get('/api/search?q=185.220')
+    assert response.status_code == 200
+    types = {item['type'] for item in response.json['results']}
+    assert 'Event' in types or 'Indicator' in types
+
+
+def test_global_search_requires_minimum_query_length(isolated_app):
+    client, _ = logged_in_client(isolated_app)
+    response = client.get('/api/search?q=a')
+    assert response.status_code == 200
+    assert response.json['results'] == []
+
+
+def test_quick_action_creates_incident(isolated_app):
+    client, token = logged_in_client(isolated_app)
+    response = client.post('/api/quick-actions', json={
+                           'action': 'create_incident', 'target': 'lab-host-01'}, headers={'X-CSRF-Token': token})
+    assert response.status_code == 200
+    assert response.json['ok'] is True
+    incidents = client.get('/api/incidents').json
+    assert any('lab-host-01' in item['title'] for item in incidents)
+
+
+def test_quick_action_simulated_block_is_logged(isolated_app):
+    client, token = logged_in_client(isolated_app)
+    response = client.post('/api/quick-actions', json={
+                           'action': 'block_ip', 'target': '203.0.113.9'}, headers={'X-CSRF-Token': token})
+    assert response.status_code == 200
+    assert 'simulated' in response.json['message'].lower()
+
+
+def test_quick_action_requires_target(isolated_app):
+    client, token = logged_in_client(isolated_app)
+    response = client.post('/api/quick-actions', json={
+                           'action': 'block_ip', 'target': ''}, headers={'X-CSRF-Token': token})
+    assert response.status_code == 400
+
+
+def test_analyst_activity_reports_online_and_assignments(isolated_app):
+    client, token = logged_in_client(isolated_app)
+    client.post('/api/quick-actions', json={'action': 'create_incident',
+                'target': 'lab-host-02'}, headers={'X-CSRF-Token': token})
+    response = client.get('/api/analyst-activity')
+    assert response.status_code == 200
+    assert 'analyst' in response.json['online']
+    assert any(item['assignee'] == 'analyst' for item in response.json['assignments'])
+
+
+def test_reports_summary_includes_analytics_fields(isolated_app):
+    client, _ = logged_in_client(isolated_app)
+    response = client.get('/api/reports/summary')
+    assert response.status_code == 200
+    for key in ('top_attack_types', 'most_targeted_assets', 'analyst_performance', 'avg_response_hours'):
+        assert key in response.json
+
+
+def test_analytics_csv_export_downloads(isolated_app):
+    client, _ = logged_in_client(isolated_app)
+    response = client.get('/export/analytics.csv')
+    assert response.status_code == 200
+    assert response.mimetype == 'text/csv'
+
+
+def test_email_report_requires_admin(isolated_app):
+    client, token = logged_in_client(isolated_app)
+    response = client.post('/api/reports/email', json={}, headers={'X-CSRF-Token': token})
+    assert response.status_code == 403
+
+
+def test_email_report_reports_unconfigured_smtp(isolated_app, monkeypatch):
+    client = isolated_app.test_client()
+    client.get('/login')
+    with client.session_transaction() as session:
+        token = session['csrf_token']
+    client.post('/login', data={'username': 'admin',
+                'password': 'admin123', 'csrf_token': token})
+    with client.session_transaction() as session:
+        token = session['csrf_token']
+    monkeypatch.delenv('SMTP_HOST', raising=False)
+    response = client.post('/api/reports/email', json={}, headers={'X-CSRF-Token': token})
+    assert response.status_code == 400
+
+
+def test_incidents_flag_overdue_open_cases(isolated_app):
+    client, token = logged_in_client(isolated_app)
+    client.post('/api/quick-actions', json={'action': 'create_incident',
+                'target': 'lab-host-03'}, headers={'X-CSRF-Token': token})
+    with isolated_app.app_context():
+        with app_module.get_db() as db:
+            stale = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+            db.execute("UPDATE incidents SET updated_at = ?", (stale,))
+    response = client.get('/api/incidents')
+    assert response.status_code == 200
+    assert any(item['overdue'] for item in response.json)
+

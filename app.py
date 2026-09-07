@@ -214,17 +214,26 @@ def sync_threat_feed(url: str | None = None) -> int:
 def start_background_scheduler() -> None:
     """Optional periodic threat-feed sync; only runs when explicitly configured."""
     interval = os.environ.get("THREAT_FEED_SYNC_INTERVAL_MINUTES")
-    if not interval:
-        return
+    if interval:
+        def loop() -> None:
+            while True:
+                time.sleep(max(5, int(interval)) * 60)
+                try:
+                    sync_threat_feed()
+                except Exception:
+                    logger.exception("Scheduled threat feed sync failed")
+        threading.Thread(target=loop, daemon=True).start()
 
-    def loop() -> None:
-        while True:
-            time.sleep(max(5, int(interval)) * 60)
-            try:
-                sync_threat_feed()
-            except Exception:
-                logger.exception("Scheduled threat feed sync failed")
-    threading.Thread(target=loop, daemon=True).start()
+    report_interval = os.environ.get("DAILY_REPORT_EMAIL_INTERVAL_HOURS")
+    if report_interval:
+        def report_loop() -> None:
+            while True:
+                time.sleep(max(1, int(report_interval)) * 3600)
+                try:
+                    send_email(*build_analytics_report_email())
+                except Exception:
+                    logger.exception("Scheduled report email failed")
+        threading.Thread(target=report_loop, daemon=True).start()
 
 
 def initialize_database() -> None:
@@ -510,6 +519,31 @@ def create_notification(title: str, message: str, severity: str = "INFO", kind: 
         dispatch_external_notification(title, message, severity)
 
 
+def send_email(subject: str, body: str) -> bool:
+    """Best-effort SMTP delivery; returns False without raising when unconfigured or unreachable."""
+    smtp_host = os.environ.get("SMTP_HOST")
+    notify_to = os.environ.get("NOTIFY_EMAIL_TO")
+    if not smtp_host or not notify_to:
+        return False
+    try:
+        email = EmailMessage()
+        email["Subject"] = subject
+        email["From"] = os.environ.get("SMTP_FROM", "alerts@m-and-m-lab.local")
+        email["To"] = notify_to
+        email.set_content(body)
+        with smtplib.SMTP(smtp_host, int(os.environ.get("SMTP_PORT", "587")), timeout=5) as server:
+            if os.environ.get("SMTP_USE_TLS", "1") == "1":
+                server.starttls()
+            smtp_user = os.environ.get("SMTP_USERNAME")
+            if smtp_user:
+                server.login(smtp_user, os.environ.get("SMTP_PASSWORD", ""))
+            server.send_message(email)
+        return True
+    except (smtplib.SMTPException, OSError, TimeoutError):
+        logger.warning("Email delivery failed")
+        return False
+
+
 def dispatch_external_notification(title: str, message: str, severity: str) -> None:
     """Best-effort delivery to configured external channels; failures never break the request."""
     slack_url = os.environ.get("SLACK_WEBHOOK_URL")
@@ -530,26 +564,7 @@ def dispatch_external_notification(title: str, message: str, severity: str) -> N
                     "Content-Type": "application/json"}), timeout=3)
         except (URLError, TimeoutError, OSError):
             logger.warning("Webhook notification delivery failed")
-    smtp_host = os.environ.get("SMTP_HOST")
-    notify_to = os.environ.get("NOTIFY_EMAIL_TO")
-    if smtp_host and notify_to:
-        try:
-            email = EmailMessage()
-            email["Subject"] = f"M & M Lab: {title}"
-            email["From"] = os.environ.get(
-                "SMTP_FROM", "alerts@m-and-m-lab.local")
-            email["To"] = notify_to
-            email.set_content(text)
-            with smtplib.SMTP(smtp_host, int(os.environ.get("SMTP_PORT", "587")), timeout=5) as server:
-                if os.environ.get("SMTP_USE_TLS", "1") == "1":
-                    server.starttls()
-                smtp_user = os.environ.get("SMTP_USERNAME")
-                if smtp_user:
-                    server.login(smtp_user, os.environ.get(
-                        "SMTP_PASSWORD", ""))
-                server.send_message(email)
-        except (smtplib.SMTPException, OSError, TimeoutError):
-            logger.warning("Email notification delivery failed")
+    send_email(f"M & M Lab: {title}", text)
 
 
 def create_backup() -> Path:
@@ -1442,9 +1457,7 @@ def activity_feed():
     return jsonify([dict(row) for row in rows])
 
 
-@app.route("/api/reports/summary")
-@login_required
-def report_summary():
+def compute_report_analytics() -> dict:
     with get_db() as db:
         daily = db.execute("SELECT substr(timestamp, 1, 10) AS day, COUNT(*) AS events, SUM(CASE WHEN severity IN ('HIGH', 'CRITICAL') THEN 1 ELSE 0 END) AS high_risk FROM events GROUP BY day ORDER BY day DESC LIMIT 14").fetchall()
         techniques = db.execute(
@@ -1464,14 +1477,66 @@ def report_summary():
         except (TypeError, ValueError):
             continue
     avg_response_hours = round(sum(response_hours) / len(response_hours), 1) if response_hours else None
-    return jsonify({
+    return {
         "daily": [dict(row) for row in daily],
         "techniques": [dict(row) for row in techniques],
         "top_attack_types": [dict(row) for row in techniques[:5]],
         "most_targeted_assets": [dict(row) for row in targeted_assets],
         "analyst_performance": [dict(row) for row in analyst_performance],
         "avg_response_hours": avg_response_hours,
-    })
+    }
+
+
+def build_analytics_report_email() -> tuple[str, str]:
+    data = compute_report_analytics()
+    lines = ["M & M Lab security analytics report", ""]
+    lines.append("Top attack types:")
+    lines += [f"  - {item['technique']} ({item['name']}): {item['alerts']} alerts" for item in data["top_attack_types"]] or ["  - No attack signal yet."]
+    lines.append("")
+    lines.append("Most targeted assets:")
+    lines += [f"  - {item['name']} ({item['ip_address']}): {item['total']} events" for item in data["most_targeted_assets"]] or ["  - No targeted assets yet."]
+    lines.append("")
+    lines.append("Analyst performance:")
+    lines += [f"  - {item['assignee']}: {item['resolved'] or 0}/{item['total']} resolved" for item in data["analyst_performance"]] or ["  - No analyst performance data yet."]
+    lines.append("")
+    lines.append(f"Average incident response time: {data['avg_response_hours']}h" if data["avg_response_hours"] is not None else "Not enough resolved cases to compute response time.")
+    return "M & M Lab: Security analytics report", "\n".join(lines)
+
+
+@app.route("/api/reports/summary")
+@login_required
+def report_summary():
+    return jsonify(compute_report_analytics())
+
+
+@app.route("/export/analytics.csv")
+@login_required
+def export_analytics_report():
+    data = compute_report_analytics()
+    stream = io.StringIO()
+    writer = csv.writer(stream)
+    writer.writerow(["section", "label", "detail", "value"])
+    for item in data["top_attack_types"]:
+        writer.writerow(["top_attack_type", item["technique"], item["name"], item["alerts"]])
+    for item in data["most_targeted_assets"]:
+        writer.writerow(["most_targeted_asset", item["name"], item["ip_address"], item["total"]])
+    for item in data["analyst_performance"]:
+        writer.writerow(["analyst_performance", item["assignee"], f"{item['resolved'] or 0}/{item['total']} resolved", item["total"]])
+    writer.writerow(["avg_response_hours", "", "", data["avg_response_hours"]])
+    log_activity("Analytics report exported", "Exported analytics CSV")
+    return send_file(io.BytesIO(stream.getvalue().encode()), mimetype="text/csv", as_attachment=True, download_name="analytics-report.csv")
+
+
+@app.route("/api/reports/email", methods=["POST"])
+@login_required
+@role_required("Admin")
+def email_report():
+    subject, body = build_analytics_report_email()
+    sent = send_email(subject, body)
+    if not sent:
+        return jsonify({"error": "SMTP is not configured (set SMTP_HOST and NOTIFY_EMAIL_TO)."}), 400
+    log_activity("Analytics report emailed", f"Sent report to {os.environ.get('NOTIFY_EMAIL_TO', '')}")
+    return jsonify({"ok": True, "message": "Report emailed."})
 
 
 @app.route("/api/search")
@@ -1934,7 +1999,19 @@ def incidents():
     with get_db() as db:
         rows = db.execute(
             "SELECT * FROM incidents ORDER BY updated_at DESC").fetchall()
-    return jsonify([dict(row) for row in rows])
+    now = datetime.now(timezone.utc)
+    results = []
+    for row in rows:
+        item = dict(row)
+        overdue = False
+        if item["status"] in {"OPEN", "INVESTIGATING"}:
+            try:
+                overdue = (now - datetime.fromisoformat(item["updated_at"])).total_seconds() > 86400
+            except (TypeError, ValueError):
+                overdue = False
+        item["overdue"] = overdue
+        results.append(item)
+    return jsonify(results)
 
 
 @app.route("/api/users")

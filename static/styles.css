@@ -3040,3 +3040,118 @@ body[data-theme="light"] .asset-health-card span {
         grid-template-columns: repeat(2, 1fr);
     }
 }
+
+/* ---- Bulk actions ---- */
+.bulk-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 23px;
+    border-bottom: 1px solid #1d3a49;
+    background: rgba(70, 240, 213, .06);
+    color: #edf8fb;
+    font: 700 10px 'Space Grotesk', sans-serif;
+}
+
+/* ---- Incident SLA badge ---- */
+.sla-badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(229, 104, 85, .18);
+    color: #ff8069;
+    font: 700 8px 'IBM Plex Mono', monospace;
+    text-transform: uppercase;
+}
+
+tr.overdue td:first-child {
+    box-shadow: inset 2px 0 #ff8069;
+}
+
+/* ---- Alert campaign correlation ---- */
+.campaign-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(90, 169, 255, .16);
+    color: #9ec7ff;
+    font: 700 8px 'IBM Plex Mono', monospace;
+    text-transform: uppercase;
+}
+
+/* ---- Onboarding checklist ---- */
+.onboarding-card {
+    margin-bottom: 14px;
+    padding: 16px 20px;
+    border: 1px solid #1d3a49;
+    border-radius: 10px;
+    background: rgba(12, 28, 40, .94);
+}
+
+.onboarding-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.onboarding-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #9bb3c2;
+    font: 11px 'Space Grotesk', sans-serif;
+}
+
+.onboarding-item i {
+    font-style: normal;
+    color: var(--neon);
+}
+
+.onboarding-item.done {
+    color: #4fd18b;
+    text-decoration: line-through;
+}
+
+/* ---- Toast ---- */
+.mm-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    z-index: 200;
+    transform: translate(-50%, 12px);
+    padding: 12px 18px;
+    border-radius: 8px;
+    background: #0c1c28;
+    border: 1px solid #1d3a49;
+    color: #edf8fb;
+    font: 600 11px 'Space Grotesk', sans-serif;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, .35);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease;
+}
+
+.mm-toast.visible {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+body[data-theme="light"] .bulk-toolbar,
+body[data-theme="light"] .onboarding-card {
+    background: var(--panel);
+    border-color: var(--line);
+    color: var(--ink);
+}
+
+body[data-theme="light"] .onboarding-item {
+    color: var(--muted);
+}
+
+body[data-theme="light"] .mm-toast {
+    background: #ffffff;
+    border-color: var(--line);
+    color: var(--ink);
+}
