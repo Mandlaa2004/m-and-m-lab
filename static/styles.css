@@ -1585,6 +1585,20 @@ td:first-child {
     font: 11px 'IBM Plex Mono', monospace;
 }
 
+.totp-qr {
+    width: 140px;
+    height: 140px;
+    background: #ffffff;
+    padding: 8px;
+    border-radius: 4px;
+}
+
+.totp-qr svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
 .mini-result strong {
     color: var(--ink);
     font-size: 12px;

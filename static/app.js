@@ -410,6 +410,7 @@ if (totpSetupButton) {
         const { data } = await postJson('/api/account/totp/setup', {});
         if (data.error) { window.alert(data.error); return; }
         document.querySelector('#totp-secret').textContent = data.secret;
+        document.querySelector('#totp-qr').innerHTML = data.qr_svg || '';
         document.querySelector('#totp-setup-result').hidden = false;
     });
     document.querySelector('#totp-verify-form').addEventListener('submit', async event => {

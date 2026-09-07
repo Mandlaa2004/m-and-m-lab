@@ -397,6 +397,7 @@
                     <div class="totp-panel" id="totp-panel">
                         <button class="row-action" id="totp-setup-button" type="button">Set up authenticator</button>
                         <div id="totp-setup-result" class="mini-result" hidden>
+                            <div id="totp-qr" class="totp-qr"></div>
                             <p>Secret: <code id="totp-secret"></code></p>
                             <form id="totp-verify-form"><input name="code" inputmode="numeric" maxlength="6"
                                     placeholder="123456" required><button class="small-button" type="submit">Enable

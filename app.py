@@ -25,6 +25,8 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, redirect, render_template, request, send_file, session, stream_with_context, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
+import qrcode
+import qrcode.image.svg
 
 BASE_DIR = Path(__file__).resolve().parent
 IS_PRODUCTION = os.environ.get("FLASK_ENV") == "production"
@@ -810,7 +812,10 @@ def totp_setup():
     log_activity("TOTP setup started",
                  "Generated a new authenticator secret")
     uri = f"otpauth://totp/M%20%26%20M%20Lab:{session['username']}?secret={secret}&issuer=M%20%26%20M%20Lab"
-    return jsonify({"secret": secret, "otpauth_uri": uri})
+    qr_buffer = io.BytesIO()
+    qrcode.make(uri, image_factory=qrcode.image.svg.SvgPathImage).save(qr_buffer)
+    qr_svg = qr_buffer.getvalue().decode("utf-8")
+    return jsonify({"secret": secret, "otpauth_uri": uri, "qr_svg": qr_svg})
 
 
 @app.route("/api/account/totp/verify", methods=["POST"])
