@@ -1449,7 +1449,104 @@ def report_summary():
         daily = db.execute("SELECT substr(timestamp, 1, 10) AS day, COUNT(*) AS events, SUM(CASE WHEN severity IN ('HIGH', 'CRITICAL') THEN 1 ELSE 0 END) AS high_risk FROM events GROUP BY day ORDER BY day DESC LIMIT 14").fetchall()
         techniques = db.execute(
             "SELECT detection_rules.mitre_attack AS technique, detection_rules.name, COUNT(alerts.id) AS alerts FROM alerts JOIN detection_rules ON detection_rules.rule_id = alerts.rule_id GROUP BY detection_rules.rule_id ORDER BY alerts DESC").fetchall()
-    return jsonify({"daily": [dict(row) for row in daily], "techniques": [dict(row) for row in techniques]})
+        targeted_assets = db.execute(
+            "SELECT assets.name, assets.ip_address, COUNT(events.id) AS total FROM assets JOIN events ON events.source_ip = assets.ip_address GROUP BY assets.id ORDER BY total DESC LIMIT 5").fetchall()
+        analyst_performance = db.execute(
+            "SELECT assignee, COUNT(*) AS total, SUM(CASE WHEN status = 'RESOLVED' THEN 1 ELSE 0 END) AS resolved FROM incidents WHERE assignee != '' GROUP BY assignee ORDER BY total DESC LIMIT 8").fetchall()
+        response_rows = db.execute(
+            "SELECT incidents.id, incidents.updated_at, MIN(incident_timeline.created_at) AS opened_at FROM incidents JOIN incident_timeline ON incident_timeline.incident_id = incidents.id WHERE incidents.status = 'RESOLVED' GROUP BY incidents.id").fetchall()
+    response_hours = []
+    for row in response_rows:
+        try:
+            opened = datetime.fromisoformat(row["opened_at"])
+            closed = datetime.fromisoformat(row["updated_at"])
+            response_hours.append(max(0.0, (closed - opened).total_seconds() / 3600))
+        except (TypeError, ValueError):
+            continue
+    avg_response_hours = round(sum(response_hours) / len(response_hours), 1) if response_hours else None
+    return jsonify({
+        "daily": [dict(row) for row in daily],
+        "techniques": [dict(row) for row in techniques],
+        "top_attack_types": [dict(row) for row in techniques[:5]],
+        "most_targeted_assets": [dict(row) for row in targeted_assets],
+        "analyst_performance": [dict(row) for row in analyst_performance],
+        "avg_response_hours": avg_response_hours,
+    })
+
+
+@app.route("/api/search")
+@login_required
+def global_search():
+    query = request.args.get("q", "").strip()
+    if len(query) < 2:
+        return jsonify({"results": []})
+    like = f"%{query}%"
+    results = []
+    with get_db() as db:
+        for row in db.execute("SELECT id, event_type, source_ip, user, severity FROM events WHERE source_ip LIKE ? OR user LIKE ? OR event_type LIKE ? ORDER BY timestamp DESC LIMIT 5", (like, like, like)):
+            results.append({"type": "Event", "label": f"{row['event_type']} · {row['source_ip']}", "detail": f"{row['user'] or 'unknown user'} · {row['severity']}", "page": "events"})
+        for row in db.execute("SELECT id, title, status FROM incidents WHERE title LIKE ? ORDER BY updated_at DESC LIMIT 5", (like,)):
+            results.append({"type": "Incident", "label": row["title"], "detail": f"Status: {row['status']}", "page": "events", "incident_id": row["id"]})
+        for row in db.execute("SELECT id, name, ip_address FROM assets WHERE name LIKE ? OR ip_address LIKE ? LIMIT 5", (like, like)):
+            results.append({"type": "Asset", "label": row["name"], "detail": row["ip_address"], "page": "assets"})
+        for row in db.execute("SELECT id, indicator_type, value FROM indicators WHERE value LIKE ? LIMIT 5", (like,)):
+            results.append({"type": "Indicator", "label": row["value"], "detail": row["indicator_type"], "page": "tools"})
+        for row in db.execute("SELECT username, role FROM users WHERE username LIKE ? LIMIT 5", (like,)):
+            results.append({"type": "User", "label": row["username"], "detail": row["role"], "page": "activity"})
+    return jsonify({"results": results[:20]})
+
+
+QUICK_ACTIONS = {
+    "block_ip": "Blocked IP",
+    "isolate_host": "Isolated host",
+    "disable_account": "Disabled account",
+    "block_domain": "Blocked domain",
+}
+
+
+@app.route("/api/quick-actions", methods=["POST"])
+@login_required
+@role_required("Admin", "Security Analyst")
+def quick_actions():
+    payload = request.get_json(silent=True) or {}
+    action = payload.get("action", "")
+    target = payload.get("target", "").strip()
+    if not target:
+        return jsonify({"error": "Provide a target for this action."}), 400
+    if action == "create_incident":
+        now_text = datetime.now(timezone.utc).isoformat()
+        with get_db() as db:
+            cursor = db.execute("INSERT INTO incidents (title, notes, status, response_stage, assignee, updated_at) VALUES (?, ?, 'OPEN', 'DETECT', ?, ?)",
+                                (f"Quick incident: {target}", "Opened from Quick Actions.", session["username"], now_text))
+            incident_id = cursor.lastrowid
+            db.execute("INSERT INTO incident_timeline (incident_id, actor, action, detail, created_at) VALUES (?, ?, 'Incident opened', ?, ?)",
+                       (incident_id, session["username"], f"Quick action against {target}", now_text))
+        log_activity("Quick action", f"Created incident for {target}")
+        return jsonify({"ok": True, "message": f"Incident opened for {target}.", "incident_id": incident_id})
+    if action not in QUICK_ACTIONS:
+        return jsonify({"error": "Unsupported quick action."}), 400
+    message = f"{QUICK_ACTIONS[action]} {target} (simulated lab response)."
+    log_activity("Quick action", message)
+    create_notification("Quick response executed", message, severity="MEDIUM", kind="response")
+    return jsonify({"ok": True, "message": message})
+
+
+@app.route("/api/analyst-activity")
+@login_required
+def analyst_activity():
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+    with get_db() as db:
+        online = [row["actor"] for row in db.execute(
+            "SELECT DISTINCT actor FROM activity_log WHERE timestamp >= ? ORDER BY actor", (cutoff,))]
+        assignments = db.execute(
+            "SELECT assignee, COUNT(*) AS open_total FROM incidents WHERE status IN ('OPEN', 'INVESTIGATING') AND assignee != '' GROUP BY assignee").fetchall()
+        recent_resolved = db.execute(
+            "SELECT title, assignee, updated_at FROM incidents WHERE status = 'RESOLVED' AND assignee != '' ORDER BY updated_at DESC LIMIT 6").fetchall()
+    return jsonify({
+        "online": online,
+        "assignments": [dict(row) for row in assignments],
+        "recent_resolved": [dict(row) for row in recent_resolved],
+    })
 
 
 @app.route("/api/settings", methods=["GET", "PATCH"])

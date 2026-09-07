@@ -8,6 +8,8 @@ let summaryRequestInFlight = false;
 let notificationsRequestInFlight = false;
 let operationsRequestInFlight = false;
 let selectedIncidentId = null;
+let latestAlerts = [];
+let latestIncidents = [];
 
 function updateLocalTime() {
     const now = new Date();
@@ -161,7 +163,8 @@ async function loadOperations() {
             loadSavedSearches(),
             loadMitreCoverage(),
             loadPlaybooks(),
-            loadAuditTrail()
+            loadAuditTrail(),
+            loadAnalystActivity()
         ]);
         if (isAdmin) await Promise.all([loadUsers(), loadPlatformSettings(), loadTeams()]);
     } finally {
@@ -170,6 +173,7 @@ async function loadOperations() {
 }
 
 function renderIncidents(items) {
+    latestIncidents = items;
     const target = document.querySelector('#incidents-table');
     target.innerHTML = items.length ? items.map(item => `<tr><td><strong>#${item.id}</strong><span class="event-message">${escapeHtml(item.title)}</span></td><td><select class="incident-stage" data-incident-id="${item.id}">${['DETECT', 'INVESTIGATE', 'CONTAIN', 'REMEDIATE', 'RESOLVE'].map(stage => `<option ${item.response_stage === stage ? 'selected' : ''}>${stage}</option>`).join('')}</select></td><td class="mono">${formatTime(item.updated_at)}</td><td><button class="row-action" data-incident-id="${item.id}" type="button">Advance</button><button class="row-action timeline-action" data-incident-id="${item.id}" type="button">Timeline</button></td></tr>`).join('') : '<tr><td colspan="4" class="empty">No investigations yet.</td></tr>';
     target.querySelectorAll('.row-action:not(.timeline-action)').forEach(button => button.addEventListener('click', () => updateIncident(button.dataset.incidentId)));
@@ -184,6 +188,15 @@ async function loadTimeline(id) {
     selectedIncidentId = id;
     document.querySelector('#evidence-workspace').hidden = false;
     loadEvidence(id);
+    renderRelatedAlerts(id);
+}
+
+function renderRelatedAlerts(incidentId) {
+    const incident = latestIncidents.find(item => String(item.id) === String(incidentId));
+    const target = document.querySelector('#incident-related-alerts');
+    if (!target) return;
+    const related = incident ? latestAlerts.filter(alert => String(alert.event_id) === String(incident.event_id)) : [];
+    target.innerHTML = related.length ? related.map(item => `<div class="alert-item static"><span class="severity severity-${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span><span><strong>${escapeHtml(item.name || 'Detection alert')}</strong><small>${escapeHtml(item.source_ip)} · ${escapeHtml(item.mitre_attack || 'unmapped')}</small></span></div>`).join('') : '<p class="empty">No linked alerts for this case.</p>';
 }
 
 async function loadEvidence(id) {
@@ -193,10 +206,20 @@ async function loadEvidence(id) {
     document.querySelector('#evidence-list').innerHTML = items.length ? items.map(item => `<div class="evidence-item"><b>${escapeHtml(item.evidence_type)}</b><span>${escapeHtml(item.content)}</span><small>${escapeHtml(item.created_by)} · ${formatTime(item.created_at)}</small></div>`).join('') : '<p class="empty">No evidence attached to this case.</p>';
 }
 
+const ALERT_STAGE_LABELS = { NEW: 'New', OPEN: 'New', ACKNOWLEDGED: 'Investigating', 'IN PROGRESS': 'Contained', RESOLVED: 'Resolved', 'FALSE POSITIVE': 'Resolved' };
+
 function renderAlerts(items) {
+    latestAlerts = items;
     document.querySelector('#alert-count').textContent = `${items.length} alert${items.length === 1 ? '' : 's'}`;
-    document.querySelector('#alerts-list').innerHTML = items.length ? items.slice(0, 8).map(item => `<button class="alert-item" data-event-id="${item.event_id}" type="button"><span class="severity severity-${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span><span><strong>${escapeHtml(item.name || 'Detection alert')}</strong><small>${escapeHtml(item.source_ip)} · ${escapeHtml(item.rule_id || 'manual')} · ${escapeHtml(item.mitre_attack || 'unmapped')}</small></span></button>`).join('') : '<p class="empty">No alerts recorded yet.</p>';
-    document.querySelectorAll('.alert-item').forEach(item => item.addEventListener('click', () => inspectEvent(item.dataset.eventId)));
+    document.querySelector('#alerts-list').innerHTML = items.length ? items.slice(0, 8).map(item => `<div class="alert-item"><button class="alert-open" data-event-id="${item.event_id}" type="button"><span class="severity severity-${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span><span><strong>${escapeHtml(item.name || 'Detection alert')}</strong><small>${escapeHtml(item.source_ip)} · ${escapeHtml(item.rule_id || 'manual')} · ${escapeHtml(item.mitre_attack || 'unmapped')}</small></span></button><span class="alert-stage">${escapeHtml(ALERT_STAGE_LABELS[item.status] || item.status)}</span><button class="row-action alert-investigate" data-alert-id="${item.id}" data-event-id="${item.event_id}" type="button">Investigate</button></div>`).join('') : '<p class="empty">No alerts recorded yet.</p>';
+    document.querySelectorAll('.alert-open').forEach(item => item.addEventListener('click', () => inspectEvent(item.dataset.eventId)));
+    document.querySelectorAll('.alert-investigate').forEach(button => button.addEventListener('click', async () => {
+        await fetch(`/api/alerts/${button.dataset.alertId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ status: 'ACKNOWLEDGED' }) });
+        const event = latestAlerts.find(alert => String(alert.id) === button.dataset.alertId);
+        if (event) await postJson('/api/incidents', { event_id: Number(button.dataset.eventId), title: event.name || 'Investigation', notes: 'Opened from alert queue.' });
+        switchPage('events');
+        loadOperations();
+    }));
     document.querySelector('#triage-list').innerHTML = items.slice(0, 6).map(item => `<div class="triage-item ${item.overdue ? 'overdue' : ''}"><div><strong>${escapeHtml(item.name || 'Detection alert')}</strong><span>${escapeHtml(item.source_ip)} · ${escapeHtml(item.escalation)} · ${item.overdue ? 'SLA overdue' : `SLA ${item.sla_minutes}m`}</span></div><div class="triage-controls"><input class="alert-assignee" data-alert-id="${item.id}" value="${escapeHtml(item.assignee)}" placeholder="Owner" aria-label="Alert owner"><select data-alert-id="${item.id}" class="triage-status"><option ${item.status === 'OPEN' || item.status === 'NEW' ? 'selected' : ''}>NEW</option><option ${item.status === 'ACKNOWLEDGED' ? 'selected' : ''}>ACKNOWLEDGED</option><option ${item.status === 'IN PROGRESS' ? 'selected' : ''}>IN PROGRESS</option><option ${item.status === 'RESOLVED' ? 'selected' : ''}>RESOLVED</option></select></div></div>`).join('') || '<p class="empty">No alerts in queue.</p>';
     document.querySelectorAll('.triage-status').forEach(select => select.addEventListener('change', () => updateAlert(select.dataset.alertId, select.value)));
 }
@@ -216,6 +239,21 @@ async function loadAssets() {
         await fetch(`/api/assets/${input.dataset.assetId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ team: input.value.trim() }) });
         loadTeams();
     }));
+    renderAssetHealth(items);
+}
+
+function renderAssetHealth(items) {
+    const target = document.querySelector('#asset-health-grid');
+    if (!target) return;
+    const buckets = { Healthy: 0, 'At risk': 0, Compromised: 0, Offline: 0 };
+    items.forEach(item => {
+        if (String(item.status).toUpperCase() === 'OFFLINE') buckets.Offline += 1;
+        else if (item.risk_level === 'CRITICAL') buckets.Compromised += 1;
+        else if (item.risk_level === 'HIGH' || item.risk_level === 'MEDIUM') buckets['At risk'] += 1;
+        else buckets.Healthy += 1;
+    });
+    const tones = { Healthy: 'healthy', 'At risk': 'atrisk', Compromised: 'compromised', Offline: 'offline' };
+    target.innerHTML = Object.entries(buckets).map(([label, count]) => `<article class="asset-health-card ${tones[label]}"><strong>${count}</strong><span>${label}</span></article>`).join('');
 }
 
 async function loadSavedSearches() {
@@ -247,7 +285,16 @@ async function loadMitreCoverage() {
     if (!response.ok) return;
     const items = await response.json();
     document.querySelector('#coverage-count').textContent = `${items.filter(item => item.covered).length}/${items.length} covered`;
-    document.querySelector('#coverage-matrix').innerHTML = items.map(item => `<div class="coverage-cell ${item.covered ? 'covered' : 'gap'}"><strong>${escapeHtml(item.technique)}</strong><span>${escapeHtml(item.name)}</span><b>${item.covered ? 'Covered' : 'Gap'}</b></div>`).join('');
+    document.querySelector('#coverage-matrix').innerHTML = items.map(item => `<button class="coverage-cell ${item.covered ? 'covered' : 'gap'}" data-technique="${escapeHtml(item.technique)}" type="button"><strong>${escapeHtml(item.technique)}</strong><span>${escapeHtml(item.name)}</span><b>${item.covered ? 'Covered' : 'Gap'}</b></button>`).join('');
+    document.querySelectorAll('.coverage-cell').forEach(cell => cell.addEventListener('click', () => showTechniqueAlerts(cell.dataset.technique)));
+}
+
+function showTechniqueAlerts(technique) {
+    const target = document.querySelector('#technique-drilldown');
+    if (!target) return;
+    const related = latestAlerts.filter(alert => alert.mitre_attack === technique);
+    target.hidden = false;
+    target.innerHTML = `<p class="eyebrow chart-label">${escapeHtml(technique)} · ${related.length} alert${related.length === 1 ? '' : 's'}</p>` + (related.length ? related.map(item => `<div class="alert-item static"><span class="severity severity-${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span><span><strong>${escapeHtml(item.name || 'Detection alert')}</strong><small>${escapeHtml(item.source_ip)}</small></span></div>`).join('') : '<p class="empty">No alerts observed for this technique yet.</p>');
 }
 
 async function loadPlaybooks() {
@@ -295,7 +342,13 @@ async function loadReports() {
     if (!response.ok) return;
     const data = await response.json();
     document.querySelector('#report-summary').innerHTML = data.daily.slice(0, 4).map(item => `<div class="report-row"><strong>${escapeHtml(item.day)}</strong><span>${item.events} events · ${item.high_risk || 0} high risk</span></div>`).join('') || '<p class="empty">No report data yet.</p>';
-    document.querySelector('#report-techniques').innerHTML = data.techniques.slice(0, 4).map(item => `<div class="report-row"><strong>${escapeHtml(item.technique)}</strong><span>${escapeHtml(item.name)} · ${item.alerts} alerts</span></div>`).join('');
+    document.querySelector('#report-techniques').innerHTML = data.top_attack_types.slice(0, 4).map(item => `<div class="report-row"><strong>${escapeHtml(item.technique)}</strong><span>${escapeHtml(item.name)} · ${item.alerts} alerts</span></div>`).join('') || '<p class="empty">No attack signal yet.</p>';
+    const assetsTarget = document.querySelector('#report-assets');
+    if (assetsTarget) assetsTarget.innerHTML = data.most_targeted_assets.slice(0, 4).map(item => `<div class="report-row"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.ip_address)} · ${item.total} events</span></div>`).join('') || '<p class="empty">No targeted assets yet.</p>';
+    const analystsTarget = document.querySelector('#report-analysts');
+    if (analystsTarget) analystsTarget.innerHTML = data.analyst_performance.slice(0, 4).map(item => `<div class="report-row"><strong>${escapeHtml(item.assignee)}</strong><span>${item.resolved || 0}/${item.total} resolved</span></div>`).join('') || '<p class="empty">No analyst performance data yet.</p>';
+    const responseTarget = document.querySelector('#report-response-time');
+    if (responseTarget) responseTarget.textContent = data.avg_response_hours != null ? `Average incident response time: ${data.avg_response_hours}h` : 'Not enough resolved cases to compute response time.';
 }
 
 async function loadNotificationPreferences() {
@@ -478,6 +531,42 @@ function enableDragReorder(gridSelector, cardSelector, storageKey) {
 document.querySelectorAll('#summary-cards .stat-card').forEach((card, index) => { card.dataset.cardId = card.className.split(' ')[1] || `card-${index}`; });
 enableDragReorder('#summary-cards', '.stat-card', 'mm-stat-order');
 
+let searchDebounce = null;
+const globalSearchInput = document.querySelector('#global-search-input');
+if (globalSearchInput) {
+    globalSearchInput.addEventListener('input', () => {
+        window.clearTimeout(searchDebounce);
+        const query = globalSearchInput.value.trim();
+        const resultsBox = document.querySelector('#global-search-results');
+        if (query.length < 2) { resultsBox.hidden = true; return; }
+        searchDebounce = window.setTimeout(async () => {
+            const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+            if (!response.ok) return;
+            const { results } = await response.json();
+            resultsBox.innerHTML = results.length ? results.map((item, index) => `<button class="search-result" data-index="${index}" data-page="${escapeHtml(item.page)}" type="button"><span class="search-result-type">${escapeHtml(item.type)}</span><span><strong>${escapeHtml(item.label)}</strong><small>${escapeHtml(item.detail)}</small></span></button>`).join('') : '<p class="empty">No matches found.</p>';
+            resultsBox.hidden = false;
+            resultsBox.querySelectorAll('.search-result').forEach(button => button.addEventListener('click', () => {
+                switchPage(button.dataset.page);
+                resultsBox.hidden = true;
+                globalSearchInput.value = '';
+            }));
+        }, 220);
+    });
+    document.addEventListener('click', event => {
+        if (!globalSearchInput.contains(event.target) && !document.querySelector('#global-search-results').contains(event.target)) {
+            document.querySelector('#global-search-results').hidden = true;
+        }
+    });
+}
+
+document.querySelectorAll('.quick-action-button').forEach(button => button.addEventListener('click', async () => {
+    const target = document.querySelector('#quick-action-target').value.trim();
+    if (!target) { document.querySelector('#quick-action-result').textContent = 'Enter a target first.'; return; }
+    const { data } = await postJson('/api/quick-actions', { action: button.dataset.action, target });
+    document.querySelector('#quick-action-result').textContent = data.error || data.message;
+    if (!data.error) { document.querySelector('#quick-action-target').value = ''; loadOperations(); }
+}));
+
 
 document.querySelector('#event-search').addEventListener('input', filterEvents);
 document.querySelector('#severity-filter').addEventListener('change', filterEvents);
@@ -642,7 +731,20 @@ async function loadIndicators() {
     const response = await fetch('/api/threat-intel');
     if (!response.ok) return;
     const items = await response.json();
-    document.querySelector('#indicator-list').innerHTML = items.slice(0, 5).map(item => `<div class="indicator-item"><strong>${escapeHtml(item.value)}</strong><span>${escapeHtml(item.status)} · ${item.confidence}% confidence</span></div>`).join('');
+    document.querySelector('#indicator-list').innerHTML = items.slice(0, 5).map(item => `<div class="indicator-item"><strong>${escapeHtml(item.value)}</strong><span>${escapeHtml(item.indicator_type)} · ${escapeHtml(item.status)} · source: ${escapeHtml(item.source || 'manual')}</span><div class="pulse-meter"><i style="width:${item.confidence}%"></i></div></div>`).join('');
+}
+
+async function loadAnalystActivity() {
+    const response = await fetch('/api/analyst-activity');
+    if (!response.ok) return;
+    const data = await response.json();
+    const onlineTarget = document.querySelector('#analyst-online-list');
+    const onlineCount = document.querySelector('#analyst-online-count');
+    if (onlineCount) onlineCount.textContent = `${data.online.length} online`;
+    if (onlineTarget) onlineTarget.innerHTML = data.online.length ? data.online.map(name => `<div class="user-item"><i class="live-dot"></i><strong>${escapeHtml(name)}</strong></div>`).join('') : '<p class="empty">No recent analyst activity.</p>';
+    renderPulseList('analyst-assignments', data.assignments, 'assignee', 'open_total');
+    const resolvedTarget = document.querySelector('#analyst-resolved');
+    if (resolvedTarget) resolvedTarget.innerHTML = data.recent_resolved.length ? data.recent_resolved.map(item => `<div class="activity-item"><i class="activity-marker"></i><div><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.assignee)} · ${formatTime(item.updated_at)}</span></div></div>`).join('') : '<p class="empty">No resolved investigations yet.</p>';
 }
 
 document.querySelector('#incident-button').addEventListener('click', async () => {

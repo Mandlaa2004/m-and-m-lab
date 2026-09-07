@@ -2780,3 +2780,263 @@ body[data-theme="light"] .achievement {
         margin-left: auto;
     }
 }
+
+/* ---- Global search ---- */
+.global-search {
+    position: relative;
+    flex: 1;
+    max-width: 420px;
+    margin: 0 24px;
+}
+
+.global-search input {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid #1d3a49;
+    border-radius: 8px;
+    background: rgba(9, 27, 40, .7);
+    color: #edf8fb;
+    font: 12px 'Space Grotesk', sans-serif;
+    outline: none;
+    transition: border-color .2s ease, box-shadow .2s ease;
+}
+
+.global-search input:focus {
+    border-color: var(--neon);
+    box-shadow: 0 0 0 3px rgba(70, 240, 213, .14);
+}
+
+.search-results {
+    position: absolute;
+    top: 42px;
+    left: 0;
+    right: 0;
+    z-index: 30;
+    max-height: 360px;
+    overflow-y: auto;
+    border: 1px solid #1d3a49;
+    border-radius: 9px;
+    background: #0c1c28;
+    box-shadow: 0 24px 50px rgba(0, 0, 0, .35);
+}
+
+.search-result {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 14px;
+    border: 0;
+    border-bottom: 1px solid #17303d;
+    background: transparent;
+    color: #edf8fb;
+    text-align: left;
+    cursor: pointer;
+    font: 12px 'Space Grotesk', sans-serif;
+}
+
+.search-result:hover {
+    background: #123241;
+}
+
+.search-result-type {
+    padding: 3px 6px;
+    border-radius: 4px;
+    background: rgba(70, 240, 213, .16);
+    color: var(--neon);
+    font: 700 8px 'IBM Plex Mono', monospace;
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+
+.search-result small {
+    display: block;
+    color: #9bb3c2;
+    font: 9px 'IBM Plex Mono', monospace;
+    margin-top: 2px;
+}
+
+/* ---- Quick response actions ---- */
+.quick-actions-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 16px 23px;
+    align-items: center;
+}
+
+.quick-actions-form input {
+    flex: 1;
+    min-width: 220px;
+    padding: 9px 11px;
+    border: 1px solid #274655;
+    border-radius: 6px;
+    background: #091b28;
+    color: #e7f0f5;
+    font: 11px 'Space Grotesk', sans-serif;
+}
+
+.quick-actions-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.quick-action-button {
+    border: 1px solid #274655;
+    border-radius: 6px;
+    background: #0c1c28;
+    color: #dbeaf0;
+    padding: 8px 12px;
+    font: 700 10px 'Space Grotesk', sans-serif;
+    cursor: pointer;
+    transition: border-color .18s ease, transform .18s ease;
+}
+
+.quick-action-button:hover {
+    border-color: var(--neon);
+    transform: translateY(-1px);
+}
+
+.quick-action-button.primary {
+    background: linear-gradient(120deg, #46f0d5, #5aa9ff);
+    border-color: transparent;
+    color: #071019;
+}
+
+/* ---- MITRE technique drill-down ---- */
+.technique-drilldown {
+    margin: 0 22px 18px;
+    border: 1px solid #1d3a49;
+    border-radius: 8px;
+    padding: 12px 14px;
+    background: #0c1c28;
+}
+
+.coverage-cell {
+    cursor: pointer;
+    font-family: inherit;
+}
+
+/* ---- Asset health ---- */
+.asset-health-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.asset-health-card {
+    padding: 16px;
+    border: 1px solid #1d3a49;
+    border-radius: 10px;
+    background: rgba(12, 28, 40, .94);
+    text-align: center;
+}
+
+.asset-health-card strong {
+    display: block;
+    font: 700 24px 'Syne', sans-serif;
+    color: #edf8fb;
+}
+
+.asset-health-card span {
+    color: #9bb3c2;
+    font: 600 9px 'IBM Plex Mono', monospace;
+    text-transform: uppercase;
+}
+
+.asset-health-card.healthy strong {
+    color: #4fd18b;
+}
+
+.asset-health-card.atrisk strong {
+    color: #d09a32;
+}
+
+.asset-health-card.compromised strong {
+    color: #e56855;
+}
+
+.asset-health-card.offline strong {
+    color: #7692a1;
+}
+
+/* ---- Redesigned alert row (New / Investigating / Contained / Resolved) ---- */
+.alert-open {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+}
+
+.alert-stage {
+    flex-shrink: 0;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(90, 169, 255, .14);
+    color: #9ec7ff;
+    font: 700 8px 'IBM Plex Mono', monospace;
+    text-transform: uppercase;
+}
+
+.alert-investigate {
+    flex-shrink: 0;
+}
+
+.alert-item.static {
+    cursor: default;
+}
+
+body[data-theme="light"] .global-search input {
+    background: #ffffff;
+    border-color: var(--line);
+    color: var(--ink);
+}
+
+body[data-theme="light"] .search-results {
+    background: #ffffff;
+    border-color: var(--line);
+}
+
+body[data-theme="light"] .search-result {
+    color: var(--ink);
+    border-bottom-color: var(--line);
+}
+
+body[data-theme="light"] .search-result:hover {
+    background: #ebf4ff;
+}
+
+body[data-theme="light"] .quick-actions-form input,
+body[data-theme="light"] .quick-action-button,
+body[data-theme="light"] .technique-drilldown,
+body[data-theme="light"] .asset-health-card {
+    background: var(--panel);
+    border-color: var(--line);
+    color: var(--ink);
+}
+
+body[data-theme="light"] .asset-health-card span {
+    color: var(--muted);
+}
+
+@media (max-width: 900px) {
+    .global-search {
+        order: 3;
+        max-width: none;
+        width: 100%;
+        margin: 8px 0 0;
+    }
+
+    .asset-health-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
