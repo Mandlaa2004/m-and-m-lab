@@ -10,46 +10,56 @@
 </head>
 
 <body data-role="{{ role }}">
-    <header class="topbar">
-        <a class="brand" href="{{ url_for('dashboard') }}">
-            <span class="mm-logo brand-mark" aria-hidden="true">
-                <svg viewBox="0 0 120 72" role="img" focusable="false">
-                    <defs>
-                        <linearGradient id="mmAccentConsole" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" stop-color="#46f0d5" />
-                            <stop offset="100%" stop-color="#f4c856" />
-                        </linearGradient>
-                    </defs>
-                    <rect x="2" y="2" width="116" height="68" rx="18" fill="#0b1620" stroke="#1c2b38" />
-                    <path d="M16 53V18h10l12 16 12-16h10v35h-9V32L50 47h-4L34 32v21h-9z" fill="url(#mmAccentConsole)" />
-                    <path d="M66 53V18h10l12 16 12-16h10v35h-9V32L100 47h-4L84 32v21h-9z" fill="#dff8f2"
-                        opacity=".92" />
-                </svg>
-            </span>
-            <span>M &amp; M <b>Lab</b></span>
-        </a>
-        <nav class="workspace-nav" aria-label="Workspace navigation">
-            <button class="nav-link active" data-scroll="overview" type="button">Overview</button>
-            <button class="nav-link" data-scroll="events" type="button">Events</button>
-            <button class="nav-link" data-scroll="investigations" type="button">Investigations</button>
-            <button class="nav-link" data-scroll="alerts" type="button">Alerts</button>
-            <button class="nav-link" data-scroll="tools" type="button">Tools</button>
-        </nav>
-        <div class="topbar-right"><span class="live-dot"></span><span>LOCAL MONITORING</span><time class="live-clock"
-                id="live-clock" aria-label="Current local time">--:--</time>
-            <div class="notification-wrap"><button class="notification-button" id="notification-button" type="button"
-                    aria-label="Open notifications"><span class="notification-icon">!</span><b id="notification-count"
-                        hidden>0</b></button>
-                <section class="notification-panel" id="notification-panel" hidden>
-                    <div class="notification-heading"><strong>Notifications</strong><button id="notifications-read"
-                            type="button">Mark all read</button></div>
-                    <div id="notification-list"></div>
-                </section>
-            </div><span class="user-chip">{{
-                username }}</span><a class="logout" href="{{ url_for('logout') }}">Sign out</a>
-        </div>
-    </header>
-    <main class="app-shell">
+    <div class="app-layout">
+        <aside class="app-sidebar" id="app-sidebar">
+            <a class="brand" href="{{ url_for('dashboard') }}">
+                <span class="mm-logo brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 120 72" role="img" focusable="false">
+                        <defs>
+                            <linearGradient id="mmAccentConsole" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#46f0d5" />
+                                <stop offset="100%" stop-color="#f4c856" />
+                            </linearGradient>
+                        </defs>
+                        <rect x="2" y="2" width="116" height="68" rx="18" fill="#0b1620" stroke="#1c2b38" />
+                        <path d="M16 53V18h10l12 16 12-16h10v35h-9V32L50 47h-4L34 32v21h-9z" fill="url(#mmAccentConsole)" />
+                        <path d="M66 53V18h10l12 16 12-16h10v35h-9V32L100 47h-4L84 32v21h-9z" fill="#dff8f2"
+                            opacity=".92" />
+                    </svg>
+                </span>
+                <span>M &amp; M <b>Lab</b></span>
+            </a>
+            <nav class="sidebar-nav" aria-label="Workspace navigation">
+                <button class="nav-link active" data-page="overview" type="button"><span class="nav-icon">&#9670;</span>Overview</button>
+                <button class="nav-link" data-page="events" type="button"><span class="nav-icon">&#9638;</span>Events &amp; Response</button>
+                <button class="nav-link" data-page="assets" type="button"><span class="nav-icon">&#9635;</span>Assets &amp; Teams</button>
+                <button class="nav-link" data-page="activity" type="button"><span class="nav-icon">&#9672;</span>Activity &amp; Settings</button>
+                <button class="nav-link" data-page="tools" type="button"><span class="nav-icon">&#10022;</span>Lab Tools</button>
+            </nav>
+            <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false">
+                <span class="theme-toggle-track"><span class="theme-toggle-thumb"></span></span>
+                <span class="theme-toggle-label" id="theme-toggle-label">Dark mode</span>
+            </button>
+        </aside>
+        <div class="app-main">
+            <header class="topbar">
+                <p class="topbar-title" id="topbar-title">Overview</p>
+                <div class="topbar-right"><span class="live-dot"></span><span>LOCAL MONITORING</span><time class="live-clock"
+                        id="live-clock" aria-label="Current local time">--:--</time>
+                    <div class="notification-wrap"><button class="notification-button" id="notification-button" type="button"
+                            aria-label="Open notifications"><span class="notification-icon">!</span><b id="notification-count"
+                                hidden>0</b></button>
+                        <section class="notification-panel" id="notification-panel" hidden>
+                            <div class="notification-heading"><strong>Notifications</strong><button id="notifications-read"
+                                    type="button">Mark all read</button></div>
+                            <div id="notification-list"></div>
+                        </section>
+                    </div><span class="user-chip">{{
+                        username }}</span><a class="logout" href="{{ url_for('logout') }}">Sign out</a>
+                </div>
+            </header>
+            <main class="app-shell">
+                <div class="page-view active" data-page="overview">
         <section class="welcome-row" id="overview">
             <div>
                 <p class="eyebrow">SECURITY OPERATIONS CENTER / OVERVIEW</p>
@@ -57,6 +67,7 @@
                 <p class="muted">Your lab is being watched. Here is the signal worth your attention.</p>
             </div>
             <div class="welcome-actions">
+                <div class="risk-gauge" id="risk-gauge" aria-label="Critical event share"></div>
                 <div class="hero-badge" aria-label="M and M Lab console is online">
                     <span class="hero-badge-mark" aria-hidden="true">M<span>M</span></span>
                     <span><strong>Console online</strong><small>Live monitoring</small></span>
@@ -125,6 +136,8 @@
                 <div class="achievement-list" id="achievement-list"></div>
             </article>
         </section>
+                </div>
+                <div class="page-view" data-page="events">
         <section class="main-grid" id="events">
             <article class="panel events-panel">
                 <div class="panel-heading">
@@ -245,6 +258,8 @@
                 <div id="rule-counts" class="pulse-list"></div>
             </article>
         </section>
+                </div>
+                <div class="page-view" data-page="assets">
         <section class="control-grid" id="control-plane">
             <article class="panel operations-panel">
                 <div class="panel-heading">
@@ -343,6 +358,8 @@
                         required><button class="small-button" type="submit">Add team</button></form>
             </article>
         </section>
+                </div>
+                <div class="page-view" data-page="activity">
         <section class="control-grid">
             <article class="panel operations-panel">
                 <div class="panel-heading">
@@ -447,6 +464,8 @@
                 </div>
             </article>
         </section>
+                </div>
+                <div class="page-view" data-page="tools">
         <section class="tools-grid" id="tools">
             <article class="panel tool-panel">
                 <div class="tool-title"><span class="tool-number">01</span>
@@ -642,7 +661,10 @@
                 <div class="rule-list" id="rules-list"></div>
             </article>
         </section>
-    </main>
+                </div>
+            </main>
+        </div>
+    </div>
     <aside class="assistant-widget" id="assistant-widget"><button class="assistant-toggle" id="assistant-toggle"
             type="button"><span class="assistant-pulse"></span>Ask M &amp; M assistant</button>
         <section class="assistant-panel" id="assistant-panel" hidden>

@@ -23,11 +23,12 @@ async function loadSummary({ refreshOperations = false, refreshNotifications = f
         const response = await fetch('/api/summary');
         if (!response.ok) return;
         const data = await response.json();
-        document.querySelector('#total-events').textContent = data.today ?? data.total;
-        document.querySelector('#open-events').textContent = data.open;
-        document.querySelector('#unique-sources').textContent = data.sources;
-        document.querySelector('#critical-events').textContent = data.critical;
-        document.querySelector('#suspicious-ips').textContent = data.suspicious_ips;
+        animateCount(document.querySelector('#total-events'), data.today ?? data.total);
+        animateCount(document.querySelector('#open-events'), data.open);
+        animateCount(document.querySelector('#unique-sources'), data.sources);
+        animateCount(document.querySelector('#critical-events'), data.critical);
+        animateCount(document.querySelector('#suspicious-ips'), data.suspicious_ips);
+        renderRiskGauge(data);
         drawChart(data.counts);
         drawTimeChart(data.hourly);
         renderActivity(data.activity);
@@ -375,7 +376,108 @@ document.querySelector('#modal-close').addEventListener('click', () => { documen
 document.querySelector('#event-modal').addEventListener('click', event => { if (event.target.id === 'event-modal') event.target.hidden = true; });
 document.querySelector('#investigate-button').addEventListener('click', async () => { if (selectedEvent) await postJson('/api/incidents', { event_id: selectedEvent.id, title: selectedEvent.event_type, notes: selectedEvent.message }); document.querySelector('#event-modal').hidden = true; loadOperations(); });
 document.querySelector('#resolve-button').addEventListener('click', async () => { if (selectedEvent) await fetch(`/api/events/${selectedEvent.id}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ status: 'Resolved' }) }); document.querySelector('#event-modal').hidden = true; loadSummary(); });
-document.querySelectorAll('.nav-link').forEach(link => link.addEventListener('click', () => { document.querySelector(`#${link.dataset.scroll}`).scrollIntoView({ behavior: 'smooth' }); document.querySelectorAll('.nav-link').forEach(item => item.classList.toggle('active', item === link)); }));
+document.querySelectorAll('.nav-link[data-page]').forEach(link => link.addEventListener('click', () => switchPage(link.dataset.page)));
+
+const pageTitles = { overview: 'Overview', events: 'Events & Response', assets: 'Assets & Teams', activity: 'Activity & Settings', tools: 'Lab Tools' };
+
+function switchPage(page) {
+    if (!pageTitles[page]) return;
+    document.querySelectorAll('.page-view').forEach(view => view.classList.toggle('active', view.dataset.page === page));
+    document.querySelectorAll('.nav-link[data-page]').forEach(link => link.classList.toggle('active', link.dataset.page === page));
+    const title = document.querySelector('#topbar-title');
+    if (title) title.textContent = pageTitles[page];
+    try { window.localStorage.setItem('mm-active-page', page); } catch (error) { /* storage unavailable */ }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+try {
+    const savedPage = window.localStorage.getItem('mm-active-page');
+    if (savedPage && pageTitles[savedPage]) switchPage(savedPage);
+} catch (error) { /* storage unavailable */ }
+
+const themeToggleButton = document.querySelector('#theme-toggle');
+function applyTheme(theme) {
+    document.body.dataset.theme = theme;
+    const label = document.querySelector('#theme-toggle-label');
+    if (label) label.textContent = theme === 'light' ? 'Light mode' : 'Dark mode';
+    if (themeToggleButton) themeToggleButton.setAttribute('aria-pressed', String(theme === 'light'));
+}
+if (themeToggleButton) {
+    let storedTheme = 'dark';
+    try { storedTheme = window.localStorage.getItem('mm-theme') || 'dark'; } catch (error) { /* storage unavailable */ }
+    applyTheme(storedTheme);
+    themeToggleButton.addEventListener('click', () => {
+        const nextTheme = document.body.dataset.theme === 'light' ? 'dark' : 'light';
+        applyTheme(nextTheme);
+        try { window.localStorage.setItem('mm-theme', nextTheme); } catch (error) { /* storage unavailable */ }
+    });
+}
+
+function animateCount(el, value) {
+    const numeric = Number(value);
+    if (!el || Number.isNaN(numeric)) { if (el) el.textContent = value; return; }
+    const start = Number(el.dataset.countValue || el.textContent) || 0;
+    if (start === numeric) { el.textContent = numeric; return; }
+    el.dataset.countValue = numeric;
+    const startTime = performance.now();
+    const duration = 500;
+    function step(now) {
+        const progress = Math.min(1, (now - startTime) / duration);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        el.textContent = Math.round(start + (numeric - start) * eased);
+        if (progress < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+}
+
+function renderRiskGauge(data) {
+    const gauge = document.querySelector('#risk-gauge');
+    if (!gauge) return;
+    const total = Number(data.today ?? data.total ?? 0) || 0;
+    const critical = Number(data.critical ?? 0) || 0;
+    const pct = total > 0 ? Math.min(100, Math.round((critical / total) * 100)) : 0;
+    const radius = 26;
+    const circumference = 2 * Math.PI * radius;
+    const offset = circumference * (1 - pct / 100);
+    const tone = pct >= 60 ? '#e56855' : pct >= 30 ? '#d09a32' : '#32805e';
+    gauge.innerHTML = `<svg viewBox="0 0 64 64"><circle class="gauge-track" cx="32" cy="32" r="${radius}"></circle><circle class="gauge-value" cx="32" cy="32" r="${radius}" stroke="${tone}" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"></circle></svg><div class="gauge-copy"><strong>${pct}%</strong><span>Critical share</span></div>`;
+}
+
+function enableDragReorder(gridSelector, cardSelector, storageKey) {
+    const grid = document.querySelector(gridSelector);
+    if (!grid) return;
+    const cards = Array.from(grid.querySelectorAll(cardSelector));
+    cards.forEach(card => {
+        card.setAttribute('draggable', 'true');
+        card.classList.add('draggable-card');
+        card.addEventListener('dragstart', () => card.classList.add('dragging'));
+        card.addEventListener('dragend', () => {
+            card.classList.remove('dragging');
+            try {
+                window.localStorage.setItem(storageKey, JSON.stringify(Array.from(grid.children).map(child => child.dataset.cardId || '')));
+            } catch (error) { /* storage unavailable */ }
+        });
+    });
+    grid.addEventListener('dragover', event => {
+        event.preventDefault();
+        const dragging = grid.querySelector('.dragging');
+        if (!dragging) return;
+        const after = Array.from(grid.querySelectorAll(`${cardSelector}:not(.dragging)`)).find(sibling => {
+            const box = sibling.getBoundingClientRect();
+            return event.clientY <= box.top + box.height / 2;
+        });
+        if (after) grid.insertBefore(dragging, after); else grid.appendChild(dragging);
+    });
+    try {
+        const savedOrder = JSON.parse(window.localStorage.getItem(storageKey) || 'null');
+        if (Array.isArray(savedOrder)) {
+            savedOrder.forEach(id => { const card = grid.querySelector(`[data-card-id="${id}"]`); if (card) grid.appendChild(card); });
+        }
+    } catch (error) { /* storage unavailable */ }
+}
+document.querySelectorAll('#summary-cards .stat-card').forEach((card, index) => { card.dataset.cardId = card.className.split(' ')[1] || `card-${index}`; });
+enableDragReorder('#summary-cards', '.stat-card', 'mm-stat-order');
+
 
 document.querySelector('#event-search').addEventListener('input', filterEvents);
 document.querySelector('#severity-filter').addEventListener('change', filterEvents);

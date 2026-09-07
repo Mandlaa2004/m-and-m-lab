@@ -1354,6 +1354,8 @@ td:first-child {
 
 .login-form input:focus {
     border-color: var(--mint);
+    box-shadow: 0 0 0 3px rgba(109, 224, 184, .16);
+    transition: border-color .2s ease, box-shadow .2s ease;
 }
 
 .primary-button {
@@ -1363,6 +1365,37 @@ td:first-child {
     padding: 14px 16px;
     background: linear-gradient(130deg, #46f0d5, #f4c856);
     color: #082133;
+    transition: transform .18s ease, box-shadow .18s ease;
+}
+
+.primary-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 14px 30px rgba(70, 240, 213, .28);
+}
+
+.login-features {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid rgba(119, 170, 210, .2);
+}
+
+.login-features span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #a8c5dc;
+    font: 600 9px 'IBM Plex Mono', monospace;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.login-features i {
+    font-style: normal;
+    color: var(--neon);
+    font-size: 8px;
 }
 
 .primary-button span {
@@ -2379,5 +2412,371 @@ table td {
 
     .coverage-matrix {
         grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+/* ---- Modernized sidebar + multi-page shell ---- */
+.app-layout {
+    display: flex;
+    align-items: stretch;
+    min-height: 100vh;
+}
+
+.app-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 26px;
+    width: 232px;
+    flex-shrink: 0;
+    padding: 26px 18px;
+    border-right: 1px solid #1d3a49;
+    background: linear-gradient(180deg, rgba(9, 21, 32, .96), rgba(7, 16, 25, .98));
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+}
+
+.app-sidebar .brand {
+    padding: 0 6px;
+}
+
+.sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.sidebar-nav .nav-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 11px 12px;
+    border-radius: 9px;
+    text-align: left;
+    transition: background .2s ease, color .2s ease, transform .15s ease;
+}
+
+.sidebar-nav .nav-link:hover,
+.sidebar-nav .nav-link.active {
+    background: linear-gradient(100deg, rgba(70, 240, 213, .16), rgba(90, 169, 255, .08));
+    color: #edf8fb;
+    transform: translateX(3px);
+}
+
+.nav-icon {
+    display: inline-grid;
+    place-items: center;
+    width: 20px;
+    color: var(--neon);
+    font-size: 13px;
+}
+
+.theme-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: auto;
+    padding: 10px 12px;
+    border: 1px solid #1d3a49;
+    border-radius: 9px;
+    background: rgba(12, 28, 40, .8);
+    color: #9bb3c2;
+    cursor: pointer;
+    font: 600 10px 'Space Grotesk', sans-serif;
+    transition: border-color .2s ease, color .2s ease;
+}
+
+.theme-toggle:hover {
+    border-color: var(--neon);
+    color: #edf8fb;
+}
+
+.theme-toggle-track {
+    position: relative;
+    width: 30px;
+    height: 16px;
+    border-radius: 9px;
+    background: #1d3a49;
+    flex-shrink: 0;
+}
+
+.theme-toggle-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--neon);
+    transition: transform .2s ease;
+}
+
+.theme-toggle[aria-pressed="true"] .theme-toggle-thumb {
+    transform: translateX(14px);
+}
+
+.app-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.app-shell {
+    padding-top: 30px;
+}
+
+.topbar {
+    padding: 0 3vw;
+}
+
+.topbar-title {
+    margin: 0;
+    color: #edf8fb;
+    font: 700 15px 'Syne', sans-serif;
+    letter-spacing: -.2px;
+}
+
+.page-view {
+    display: none;
+    animation: page-rise .4s cubic-bezier(.2, .8, .2, 1);
+}
+
+.page-view.active {
+    display: block;
+}
+
+/* ---- Risk gauge ---- */
+.risk-gauge {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    position: relative;
+    width: 78px;
+    height: 78px;
+}
+
+.risk-gauge svg {
+    width: 64px;
+    height: 64px;
+    transform: rotate(-90deg);
+}
+
+.risk-gauge .gauge-track {
+    fill: none;
+    stroke: #1d3a49;
+    stroke-width: 6;
+}
+
+.risk-gauge .gauge-value {
+    fill: none;
+    stroke-width: 6;
+    stroke-linecap: round;
+    transition: stroke-dashoffset .6s cubic-bezier(.2, .8, .2, 1), stroke .3s ease;
+}
+
+.risk-gauge .gauge-copy {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    pointer-events: none;
+}
+
+.risk-gauge .gauge-copy strong {
+    color: #edf8fb;
+    font: 700 15px 'Syne', sans-serif;
+}
+
+.risk-gauge .gauge-copy span {
+    color: #9bb3c2;
+    font: 600 7px 'IBM Plex Mono', monospace;
+    text-transform: uppercase;
+}
+
+/* ---- Drag-and-drop reorderable stat cards ---- */
+.draggable-card {
+    cursor: grab;
+    transition: transform .18s ease, box-shadow .18s ease, opacity .18s ease;
+}
+
+.draggable-card:active {
+    cursor: grabbing;
+}
+
+.draggable-card.dragging {
+    opacity: .45;
+    transform: scale(.97);
+}
+
+/* ---- Micro-interactions ---- */
+.panel,
+.stat-card {
+    transition: transform .2s ease, box-shadow .2s ease;
+}
+
+.panel:hover,
+.stat-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, .22);
+}
+
+.bar,
+.time-chart span,
+.pulse-meter i,
+.attack-row b,
+#xp-progress {
+    transition: height .5s cubic-bezier(.2, .8, .2, 1), width .5s cubic-bezier(.2, .8, .2, 1);
+}
+
+/* ---- Light theme override ---- */
+body[data-theme="light"] {
+    background-color: var(--paper);
+    background-image: none;
+    color: var(--ink);
+}
+
+body[data-theme="light"] .app-sidebar {
+    background: #ffffff;
+    border-right-color: var(--line);
+}
+
+body[data-theme="light"] .sidebar-nav .nav-link {
+    color: var(--muted);
+}
+
+body[data-theme="light"] .sidebar-nav .nav-link:hover,
+body[data-theme="light"] .sidebar-nav .nav-link.active {
+    background: #ebf4ff;
+    color: var(--ink);
+}
+
+body[data-theme="light"] .theme-toggle {
+    border-color: var(--line);
+    background: #f9fcff;
+    color: var(--muted);
+}
+
+body[data-theme="light"] .topbar {
+    background: rgba(255, 255, 255, .9);
+    border-bottom-color: var(--line);
+}
+
+body[data-theme="light"] .topbar-title,
+body[data-theme="light"] .brand,
+body[data-theme="light"] .live-clock,
+body[data-theme="light"] .user-chip,
+body[data-theme="light"] .welcome-row h1,
+body[data-theme="light"] .panel h2,
+body[data-theme="light"] .stat-card strong {
+    color: var(--ink);
+}
+
+body[data-theme="light"] .topbar-right,
+body[data-theme="light"] .muted,
+body[data-theme="light"] .stat-label,
+body[data-theme="light"] .trend,
+body[data-theme="light"] .panel .eyebrow,
+body[data-theme="light"] .risk-gauge .gauge-copy span,
+body[data-theme="light"] .nav-icon {
+    color: var(--muted);
+}
+
+body[data-theme="light"] .welcome-row {
+    border-color: var(--line);
+    background: linear-gradient(105deg, #ffffff, var(--sky));
+    box-shadow: var(--shadow);
+}
+
+body[data-theme="light"] .stat-card,
+body[data-theme="light"] .panel,
+body[data-theme="light"] .severity-panel,
+body[data-theme="light"] .pulse-panel,
+body[data-theme="light"] .operations-panel,
+body[data-theme="light"] .tool-panel {
+    background: var(--panel);
+    border-color: var(--line);
+    box-shadow: var(--shadow);
+}
+
+body[data-theme="light"] table th {
+    color: var(--muted);
+    border-color: var(--line);
+}
+
+body[data-theme="light"] table td {
+    color: var(--ink);
+    border-color: var(--line);
+}
+
+body[data-theme="light"] .filters input,
+body[data-theme="light"] .filters select,
+body[data-theme="light"] .compact-form input,
+body[data-theme="light"] .compact-form select,
+body[data-theme="light"] .tool-panel input,
+body[data-theme="light"] .tool-panel textarea,
+body[data-theme="light"] .settings-form input,
+body[data-theme="light"] .settings-form select,
+body[data-theme="light"] .asset-team-input,
+body[data-theme="light"] .totp-panel code {
+    color: var(--ink);
+    border-color: var(--line);
+    background: #fbfdff;
+}
+
+body[data-theme="light"] .risk-gauge .gauge-copy strong {
+    color: var(--ink);
+}
+
+body[data-theme="light"] .risk-gauge .gauge-track {
+    stroke: var(--line);
+}
+
+body[data-theme="light"] .threat-map {
+    border-color: var(--line);
+    background: linear-gradient(rgba(0, 126, 146, .05) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 126, 146, .05) 1px, transparent 1px), #f9fcff;
+}
+
+body[data-theme="light"] .threat-row {
+    color: var(--ink);
+    border-right-color: var(--line);
+}
+
+body[data-theme="light"] .threat-roster {
+    border-top-color: var(--line);
+}
+
+body[data-theme="light"] .attack-row span,
+body[data-theme="light"] .attack-row strong,
+body[data-theme="light"] .response-step,
+body[data-theme="light"] .achievement {
+    color: var(--ink);
+}
+
+@media (max-width: 900px) {
+    .app-layout {
+        flex-direction: column;
+    }
+
+    .app-sidebar {
+        position: static;
+        height: auto;
+        width: 100%;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
+    .sidebar-nav {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+
+    .theme-toggle {
+        margin-top: 0;
+        margin-left: auto;
     }
 }
