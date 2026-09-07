@@ -394,7 +394,6 @@
                         type="submit">Save</button></form>
                 <div class="account-security">
                     <button class="row-action" id="sign-out-all" type="button">Sign out all devices</button>
-                    {% if role == 'Admin' %}
                     <div class="totp-panel" id="totp-panel">
                         <button class="row-action" id="totp-setup-button" type="button">Set up authenticator</button>
                         <div id="totp-setup-result" class="mini-result" hidden>
@@ -406,7 +405,6 @@
                         <button class="row-action" id="totp-disable-button" type="button" hidden>Disable
                             2FA</button>
                     </div>
-                    {% endif %}
                 </div>
             </article>
         </section>

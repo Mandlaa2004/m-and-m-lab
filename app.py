@@ -802,7 +802,6 @@ def revoke_sessions():
 
 @app.route("/api/account/totp/setup", methods=["POST"])
 @login_required
-@role_required("Admin")
 def totp_setup():
     secret = generate_totp_secret()
     with get_db() as db:
@@ -816,7 +815,6 @@ def totp_setup():
 
 @app.route("/api/account/totp/verify", methods=["POST"])
 @login_required
-@role_required("Admin")
 def totp_verify():
     payload = request.get_json(silent=True) or {}
     with get_db() as db:
@@ -833,7 +831,6 @@ def totp_verify():
 
 @app.route("/api/account/totp/disable", methods=["POST"])
 @login_required
-@role_required("Admin")
 def totp_disable():
     with get_db() as db:
         db.execute("UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE username = ?",
