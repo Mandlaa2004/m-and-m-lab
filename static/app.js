@@ -604,9 +604,14 @@ if (themeToggleButton) {
 function animateCount(el, value) {
     const numeric = Number(value);
     if (!el || Number.isNaN(numeric)) { if (el) el.textContent = value; return; }
-    const start = Number(el.dataset.countValue || el.textContent) || 0;
-    if (start === numeric) { el.textContent = numeric; return; }
+    const start = Number(el.dataset.countValue || 0) || 0;
     el.dataset.countValue = numeric;
+    // Always set the final value immediately so the UI never gets stuck showing
+    // a placeholder (e.g. "--") when the tab is backgrounded/throttled and
+    // requestAnimationFrame never fires. The animation below is a progressive
+    // enhancement on top of this guaranteed final render.
+    el.textContent = numeric;
+    if (start === numeric || document.hidden) return;
     const startTime = performance.now();
     const duration = 500;
     function step(now) {
