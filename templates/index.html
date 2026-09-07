@@ -497,29 +497,52 @@
                         placeholder="https://example.org/ip-feed.txt (optional)"><button class="small-button"
                         type="button" id="threat-feed-sync-button">Sync threat feed</button></div>
             </article>
-            <article class="panel operations-panel">
-                <div class="panel-heading">
+        </section>
+        <section class="panel investigation-panel" id="investigation-panel">
+            <div class="panel-heading">
+                <div>
+                    <p class="eyebrow">INCIDENT INVESTIGATION</p>
+                    <h2>Case workspace</h2>
+                </div><span class="event-count" id="investigation-status-badge">Select a case</span>
+            </div>
+            <div class="investigation-empty" id="investigation-empty">
+                <p class="empty">Choose an incident in Events &amp; Response &rarr; Case Management, then click
+                    "Timeline" to open it here.</p>
+            </div>
+            <div class="investigation-body" id="investigation-body" hidden>
+                <div class="investigation-header">
                     <div>
-                        <p class="eyebrow">CASE CONTEXT</p>
-                        <h2>Incident timeline</h2>
-                    </div><span class="event-count">Select a case</span>
+                        <h3 id="investigation-title">Investigation</h3>
+                        <span class="mono" id="investigation-id">#--</span>
+                    </div>
+                    <div class="investigation-stage-track" id="investigation-stage-track"></div>
                 </div>
-                <div id="incident-timeline" class="timeline-list">
-                    <p class="empty">Choose an incident to view its timeline.</p>
+                <div class="investigation-summary" id="investigation-summary"></div>
+                <div class="investigation-columns">
+                    <div class="investigation-col">
+                        <p class="eyebrow chart-label">TIMELINE</p>
+                        <div id="incident-timeline" class="timeline-list">
+                            <p class="empty">No timeline entries yet.</p>
+                        </div>
+                    </div>
+                    <div class="investigation-col">
+                        <p class="eyebrow chart-label">EVIDENCE &amp; NOTES</p>
+                        <div id="evidence-list" class="evidence-list"></div>
+                        <form class="evidence-form" id="evidence-form"><select name="evidence_type">
+                                <option>NOTE</option>
+                                <option>LOG</option>
+                                <option>HASH</option>
+                                <option>EVENT</option>
+                            </select><input name="content"
+                                placeholder="Attach analyst note, log excerpt, hash, or event ID"
+                                required><button class="small-button" type="submit">Attach</button></form>
+                    </div>
                 </div>
-                <div class="evidence-workspace" id="evidence-workspace" hidden>
-                    <p class="eyebrow chart-label">RELATED ALERTS</p>
-                    <div id="incident-related-alerts" class="alert-list"></div>
-                    <div id="evidence-list" class="evidence-list"></div>
-                    <form class="evidence-form" id="evidence-form"><select name="evidence_type">
-                            <option>NOTE</option>
-                            <option>LOG</option>
-                            <option>HASH</option>
-                            <option>EVENT</option>
-                        </select><input name="content" placeholder="Attach analyst note, log excerpt, hash, or event ID"
-                            required><button class="small-button" type="submit">Attach</button></form>
-                </div>
-            </article>
+                <p class="eyebrow chart-label">RELATED ALERTS</p>
+                <div id="incident-related-alerts" class="alert-list"></div>
+                <p class="eyebrow chart-label">RECOMMENDED RESPONSE ACTIONS</p>
+                <div id="investigation-recommendations" class="recommendation-list"></div>
+            </div>
         </section>
                 </div>
                 <div class="page-view" data-page="tools">

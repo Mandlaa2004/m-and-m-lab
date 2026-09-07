@@ -235,15 +235,64 @@ function renderIncidents(items) {
     target.querySelectorAll('.timeline-action').forEach(button => button.addEventListener('click', () => loadTimeline(button.dataset.incidentId)));
 }
 
+const STAGE_ORDER = ['DETECT', 'INVESTIGATE', 'CONTAIN', 'REMEDIATE', 'RESOLVE'];
+const PLAYBOOK_MATCHERS = [
+    { test: /login|credential|brute/i, id: 'brute-force' },
+    { test: /malware|signature|quarantine/i, id: 'malware' },
+    { test: /scan|probe|recon/i, id: 'recon' },
+    { test: /phish/i, id: 'phishing' },
+];
+let latestPlaybooks = [];
+
 async function loadTimeline(id) {
     const response = await fetch(`/api/incidents/${id}/timeline`);
     if (!response.ok) return;
     const items = await response.json();
     document.querySelector('#incident-timeline').innerHTML = items.length ? items.map(item => `<div class="timeline-item"><strong>${escapeHtml(item.action)}</strong><span>${escapeHtml(item.actor)} · ${formatTime(item.created_at)}</span><p>${escapeHtml(item.detail || '')}</p></div>`).join('') : '<p class="empty">No timeline entries yet.</p>';
     selectedIncidentId = id;
-    document.querySelector('#evidence-workspace').hidden = false;
+    document.querySelector('#investigation-empty').hidden = true;
+    document.querySelector('#investigation-body').hidden = false;
+    await renderInvestigationHeader(id);
     loadEvidence(id);
     renderRelatedAlerts(id);
+}
+
+async function renderInvestigationHeader(incidentId) {
+    const incident = latestIncidents.find(item => String(item.id) === String(incidentId));
+    if (!incident) return;
+    document.querySelector('#investigation-title').textContent = incident.title;
+    document.querySelector('#investigation-id').textContent = `#${incident.id} · ${incident.status}${incident.overdue ? ' · SLA overdue' : ''}`;
+    document.querySelector('#investigation-status-badge').textContent = incident.status;
+    document.querySelector('#investigation-stage-track').innerHTML = STAGE_ORDER.map((stage, index) => {
+        const currentIndex = STAGE_ORDER.indexOf(incident.response_stage);
+        const state = index < currentIndex ? 'done' : index === currentIndex ? 'active' : '';
+        return `<div class="stage-node ${state}"><span>${index + 1}</span><small>${stage}</small></div>`;
+    }).join('');
+    const summary = document.querySelector('#investigation-summary');
+    if (!incident.event_id) {
+        summary.innerHTML = '<p class="empty">No source event linked to this case.</p>';
+        renderRecommendations('');
+        return;
+    }
+    const response = await fetch(`/api/events/${incident.event_id}`);
+    if (!response.ok) { summary.innerHTML = '<p class="empty">Source event unavailable.</p>'; return; }
+    const event = await response.json();
+    summary.innerHTML = [
+        ['Source IP', event.source_ip],
+        ['User', event.user || 'unknown'],
+        ['Severity', event.severity],
+        ['Event type', event.event_type],
+        ['Reported', formatTime(event.timestamp)],
+    ].map(([label, value]) => `<div class="investigation-fact"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>`).join('');
+    renderRecommendations(event.event_type);
+}
+
+function renderRecommendations(eventType) {
+    const target = document.querySelector('#investigation-recommendations');
+    if (!target) return;
+    const match = PLAYBOOK_MATCHERS.find(entry => entry.test.test(eventType || ''));
+    const playbook = match ? latestPlaybooks.find(item => item.id === match.id) : null;
+    target.innerHTML = playbook ? playbook.steps.map((step, index) => `<div class="recommendation-item"><span>${index + 1}</span>${escapeHtml(step)}</div>`).join('') : '<p class="empty">No matching playbook. Use the Playbooks panel to run a manual response.</p>';
 }
 
 function renderRelatedAlerts(incidentId) {
@@ -253,6 +302,7 @@ function renderRelatedAlerts(incidentId) {
     const related = incident ? latestAlerts.filter(alert => String(alert.event_id) === String(incident.event_id)) : [];
     target.innerHTML = related.length ? related.map(item => `<div class="alert-item static"><span class="severity severity-${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span><span><strong>${escapeHtml(item.name || 'Detection alert')}</strong><small>${escapeHtml(item.source_ip)} · ${escapeHtml(item.mitre_attack || 'unmapped')}</small></span></div>`).join('') : '<p class="empty">No linked alerts for this case.</p>';
 }
+
 
 async function loadEvidence(id) {
     const response = await fetch(`/api/incidents/${id}/evidence`);
@@ -375,6 +425,7 @@ async function loadPlaybooks() {
     const response = await fetch('/api/playbooks');
     if (!response.ok) return;
     const items = await response.json();
+    latestPlaybooks = items;
     const target = document.querySelector('#playbook-list');
     target.innerHTML = items.map(item => `<button class="playbook-button" data-playbook-id="${escapeHtml(item.id)}" type="button"><span>${escapeHtml(item.title)}</span><b>Run</b></button>`).join('');
     target.querySelectorAll('.playbook-button').forEach(button => button.addEventListener('click', async () => {
